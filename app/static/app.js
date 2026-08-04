@@ -684,13 +684,14 @@ document.getElementById('wrapper').addEventListener('wheel',e=>{e.preventDefault
 
 document.addEventListener('keydown',e=>{
   // Behind the network gate the board is not usable yet; see isGated().
-  if(isGated()&&!document.getElementById('liScrim')?.classList.contains('open')) return;
+  if((isGated()||introAdviceOpen())&&!document.getElementById('liScrim')?.classList.contains('open')) return;
   if(e.code==='Space'&&!isTyping()){e.preventDefault();if(!spaceDown){spaceDown=true;document.getElementById('wrapper').classList.add('space-pan');}}
   if(isTyping()) return;
   switch(e.key){
     case'Escape':
       if(selectedIds.size>0){selectedIds.clear();renderMultiSel();break;}
       if(document.getElementById('liScrim')?.classList.contains('open')){closeLinkedInImport();break;}
+      if(introAdviceOpen()){closeIntroAdvice();break;}
       if(document.getElementById('discoverScrim')?.classList.contains('open')){closeDiscoverModal();break;}
       if(mode!=='normal')exitMode();else closeDetail();break;
     case'c':case'C':toggleMode('connect');break;
@@ -1709,11 +1710,6 @@ function exportBoardCSV() {
   a.download = `artemis-${slug}-${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
-}
-
-function triggerImport() {
-  const inp = document.getElementById('hvImportFile');
-  if (inp) { inp.value = ''; inp.click(); }
 }
 
 let _importPayload = null;
@@ -2895,6 +2891,7 @@ async function confirmLinkedInImport() {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     closeLinkedInImport();
+    closeIntroAdvice();     // imported: never pitch this again
     await loadContactsFromBackend();
     renderContacts();
     refreshWave0();
@@ -3347,9 +3344,59 @@ function submitIdentity() {
   if (err) err.textContent = '';
   setOperatorName(name);
   document.getElementById('hvIdent')?.classList.remove('open');
+  // Straight into the import advice — this is the moment it is relevant, and
+  // the flag key is per name, so it is keyed to the identity just entered.
+  maybeShowIntroAdvice();
   // Only now is the network question worth asking -- and it is not a question
   // any more, so hand over to the gate rather than to a one-shot check.
   armNetworkGate();
+}
+
+// ── IMPORT ADVICE ──────────────────────────────────────
+// Shown once, straight after the identity screen. It replaces the old blocking
+// gate: the quality difference between routing with and without your own
+// network is real, but it is a reason to recommend the import, not to withhold
+// the app until someone performs it.
+//
+// Dismissal is remembered per operator name rather than globally, so a second
+// person on the same browser still gets told once. It is also set when an
+// import succeeds — someone who has already imported should never see the pitch
+// for a thing they have done.
+function _introFlagKey() { return 'artemis_import_advice_seen:' + operatorName(); }
+
+function introAdviceSeen() { return !!localStorage.getItem(_introFlagKey()); }
+
+function markIntroAdviceSeen() {
+  try { localStorage.setItem(_introFlagKey(), '1'); } catch (_) {}
+}
+
+function showIntroAdvice() {
+  const el = document.getElementById('hvIntro');
+  if (!el) return;
+  el.classList.add('open');
+  // Lets the importer stack above this panel, the same way it did over the gate.
+  document.body.classList.add('gated');
+}
+
+// Every exit from the panel goes through here — X, LATER, Escape, backdrop, and
+// a completed import — so "don't show this again" is decided in one place.
+function closeIntroAdvice() {
+  markIntroAdviceSeen();
+  document.getElementById('hvIntro')?.classList.remove('open');
+  document.body.classList.remove('gated');
+}
+
+function introAdviceOpen() {
+  return document.getElementById('hvIntro')?.classList.contains('open') === true;
+}
+
+// Only worth showing to someone who has named themselves (the import is
+// attributed to that name) and has nothing imported yet.
+async function maybeShowIntroAdvice() {
+  if (!hasOperatorName() || introAdviceSeen()) return;
+  try { await loadMyContactCount(); } catch (_) {}
+  if (_myContactCount) { markIntroAdviceSeen(); return; }
+  showIntroAdvice();
 }
 
 // No-ops since the network gate was removed. Kept so the call sites that used
@@ -3430,6 +3477,6 @@ async function backfillOwnerGraphEdgesOnce() {
   setTimeout(() => {
     // Identity first -- submitIdentity() chains to the network gate, so the two
     // are never stacked on top of each other.
-    if (!maybeShowIdentityGate()) armNetworkGate();
+    if (!maybeShowIdentityGate()) { armNetworkGate(); maybeShowIntroAdvice(); }
   }, Math.max(0, BOOT_SPLASH_MS - (Date.now() - started)));
 })();

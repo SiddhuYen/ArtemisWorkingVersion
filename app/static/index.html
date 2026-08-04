@@ -361,7 +361,7 @@ body {
    routes THROUGH your own network: with zero contacts every path it finds
    terminates at a stranger, so this is a correctness warning, not an upsell.
    z-index sits above #hvBoot (200) so it can never appear behind the splash. */
-#hvGate { position:fixed;inset:0;z-index:210;display:none;place-items:center;
+#hvIntro { position:fixed;inset:0;z-index:210;display:none;place-items:center;
   background:oklch(0.06 0.02 22/0.82);backdrop-filter:blur(3px);padding:20px;
   font-family:"Share Tech Mono","JetBrains Mono",monospace;
   /* The panel's max-width:100% resolves against this column, and an auto column
@@ -369,8 +369,8 @@ body {
      and ran off the screen, taking the export steps with it. minmax(0,1fr)
      caps the column at the viewport so the max-width can actually bite. */
   grid-template-columns:minmax(0,1fr); }
-#hvGate.open { display:grid; }
-#hvGatePanel {
+#hvIntro.open { display:grid; }
+#hvIntroPanel {
   width:660px;max-width:100%;position:relative;
   max-height:calc(100vh - 40px);overflow-y:auto;scrollbar-width:thin;
   background:linear-gradient(180deg,oklch(0.185 0.016 22),oklch(0.13 0.012 22));
@@ -378,8 +378,16 @@ body {
   box-shadow:0 30px 80px oklch(0 0 0/0.6),inset 0 0 40px oklch(0.635 0.205 22/0.06);
   padding:28px;
 }
-#hvGate .hg-lbl { font-size:10px;letter-spacing:0.3em;color:var(--ink-mute);margin-bottom:4px; }
-#hvGate h3 { font-family:"Rajdhani","Share Tech Mono",sans-serif;font-weight:700;
+#hvIntroX { position:absolute;top:12px;right:14px;width:26px;height:26px;display:grid;
+  place-items:center;background:none;border:1px solid var(--accent-line);color:var(--ink-mute);
+  font-size:13px;cursor:pointer;line-height:1;transition:border-color .15s,color .15s; }
+#hvIntroX:hover { border-color:var(--accent);color:var(--accent-bright); }
+#hvIntroLater { background:none;border:1px solid var(--accent-line);color:var(--ink-mute);
+  padding:8px 16px;font-family:inherit;font-size:10px;letter-spacing:0.18em;cursor:pointer;
+  transition:border-color .15s,color .15s; }
+#hvIntroLater:hover { border-color:var(--accent);color:var(--accent-bright); }
+#hvIntro .hg-lbl { font-size:10px;letter-spacing:0.3em;color:var(--ink-mute);margin-bottom:4px; }
+#hvIntro h3 { font-family:"Rajdhani","Share Tech Mono",sans-serif;font-weight:700;
   font-size:22px;letter-spacing:0.06em;margin:0 0 14px;color:var(--accent-bright);
   text-shadow:0 0 14px var(--accent-glow); }
 .hg-warn { border-left:2px solid var(--accent);background:var(--accent-wash);
@@ -1550,9 +1558,7 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
             <button id="hfActive" onclick="setHomeFilter('active')">ACTIVE · <span id="hfCntActive">0</span></button>
             <button id="hfArchived" onclick="setHomeFilter('archived')">ARCHIVED · <span id="hfCntArchived">0</span></button>
           </div>
-          <button class="hv-btn ghost" onclick="triggerImport()" title="Import boards from a .json export file">⬆ IMPORT</button>
           <button class="hv-btn ghost" onclick="exportDashboard()" title="Export all boards to a shareable .json file">⬇ EXPORT</button>
-          <input type="file" id="hvImportFile" accept=".json,application/json" style="display:none" onchange="handleImportFile(event)">
           <button class="hv-btn ghost" onclick="showContactsView()" title="Manage your personal connections">@ MY CONNECTIONS</button>
           <button class="hv-btn" onclick="showCreateModal()">+ NEW BOARD</button>
         </div>
@@ -2009,9 +2015,69 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
   </div>
 </div>
 
-<!-- The LinkedIn network gate that used to sit here has been removed: an
-     import is no longer required to use the app. The in-app importer
-     (#liScrim) is unchanged and still available from IMPORT. -->
+<!-- Shown once after the identity screen. This is ADVICE, not a gate: it can be
+     closed with the X, with "LATER", with Escape, or by clicking the backdrop,
+     and the app is fully usable without ever importing anything. It exists
+     because the quality difference is real and invisible — someone who never
+     imports will just get colder routes and have no idea why. -->
+<div id="hvIntro" onclick="if(event.target===this)closeIntroAdvice()">
+  <div id="hvIntroPanel">
+    <span class="art-br tl"></span><span class="art-br tr"></span>
+    <span class="art-br bl"></span><span class="art-br br2"></span>
+    <button id="hvIntroX" onclick="closeIntroAdvice()" title="Close — you can import later from IMPORT">✕</button>
+    <div class="hg-lbl">// OPTIONAL — IMPROVES RESULTS</div>
+    <h3>ROUTES ARE WARMER WITH YOUR NETWORK</h3>
+
+    <div class="hg-warn">
+      Artemis can find a route to almost anyone from the public record alone.
+      Without your connections, though, it doesn't know where <i>you</i> sit — so
+      the routes it finds tend to end at someone you'd still have to approach cold.
+      <br><br>
+      Import your connections and the <b>first hop can be someone you already
+      know</b>. Your list is only ever used for routes that start from you, and
+      only for that first step.
+    </div>
+
+    <div class="hg-lbl" style="margin-bottom:6px">// HOW TO GET THE FILE</div>
+    <div class="li-steps">
+      <div class="li-step">
+        <div class="sn">1</div>
+        <div>Go to <a href="https://www.linkedin.com/mypreferences/d/categories/data-privacy" target="_blank"
+               style="color:oklch(0.72 0.205 22)">linkedin.com → Settings → Data Privacy → Get a copy of your data</a></div>
+      </div>
+      <div class="li-step">
+        <div class="sn">2</div>
+        <div>Select <b style="color:oklch(0.72 0.205 22)">Connections</b> only, then click <b style="color:oklch(0.72 0.205 22)">Request archive</b>. LinkedIn emails you a link, usually within 10 minutes.</div>
+      </div>
+      <div class="li-step">
+        <div class="sn">3</div>
+        <div>Download the zip, open it, and drag <b style="color:oklch(0.72 0.205 22)">Connections.csv</b> into the box below.</div>
+      </div>
+    </div>
+
+    <div class="hg-grid hg-grid-solo">
+      <div class="hg-box" id="hgBoxCsv"
+        ondragover="event.preventDefault();this.classList.add('dragover')"
+        ondragleave="this.classList.remove('dragover')"
+        ondrop="gateDropCsv(event)"
+        onclick="document.getElementById('hgCsvIn').click()">
+        <input type="file" id="hgCsvIn" accept=".csv,text/csv" style="display:none"
+               onchange="gateCsvChange(event)">
+        <div class="hg-icon">📎</div>
+        <div class="hg-name">LINKEDIN CONNECTIONS</div>
+        <div class="hg-hint">Drop <b>Connections.csv</b> here<br>or click to browse</div>
+      </div>
+    </div>
+
+    <div class="hg-foot">
+      <div class="hg-note">
+        The archive email can take a few minutes. You can close this and import
+        any time from <b>IMPORT</b> — nothing here is required.
+      </div>
+      <button id="hvIntroLater" onclick="closeIntroAdvice()">LATER ▸</button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════════════ DETAIL RAIL ═══════════════════ -->
 <div id="hvRailScrim" onclick="closeDetailRail()"></div>
