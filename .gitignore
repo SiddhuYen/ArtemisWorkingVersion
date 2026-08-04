@@ -1,0 +1,27 @@
+# Secrets. .env holds a live ANTHROPIC_API_KEY — never commit it.
+# .env.example is the checked-in template and carries empty values.
+.env
+.env.local
+*.pem
+*.key
+
+# Local state. The SQLite files hold real boards and real imported contacts
+# (someone's actual LinkedIn export), which is personal data and does not
+# belong in a repository.
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+*.log
