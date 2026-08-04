@@ -7,10 +7,11 @@ first-degree ties *for the person who uploaded them*, which is why every read
 here is scoped by `owner_norm` and why routing only offers them when the route
 starts at that same person.
 
-Claude reaches this through a tool rather than a prompt dump. A LinkedIn export
-runs to thousands of rows; pasting them into every request would cost more than
-the search does and bury the actual question. A tool lets it look up the handful
-of names it has a reason to care about.
+A LinkedIn export runs to thousands of rows, which cannot all go into a prompt:
+it would cost more than the search does and bury the actual question. So the
+list is narrowed here, locally, and only the shortlist travels — see
+`top_candidates`. Ranking a few thousand rows is a database job, not a reasoning
+one, and doing it up front keeps a route to a single request.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ import csv
 import io
 import re
 import unicodedata
-from collections import Counter
 from typing import Any, Iterable
 
 from sqlalchemy import delete, select
@@ -183,55 +183,70 @@ def to_profile_dict(c: Contact) -> dict[str, Any]:
     }
 
 
-def summarize(db: Session, owner_name: str, top: int = 12) -> dict[str, Any]:
-    """The shape of a network, rather than a slice of it.
+# Words that carry no signal when matching a contact against a target: legal
+# suffixes, and the connective tissue of a job description.
+_STOPWORDS = {
+    "the", "and", "of", "at", "for", "inc", "llc", "ltd", "corp", "corporation",
+    "company", "co", "group", "holdings", "plc", "sa", "ag", "gmbh", "limited",
+    "partners", "capital", "ventures", "global", "international", "technologies",
+    "technology", "solutions", "services", "systems", "labs",
+}
 
-    Search alone gives no way to ask "what is in here", so a caller whose
-    guesses miss has nothing to do but guess differently — in practice, probing
-    single letters to enumerate the list. That is harmless at three contacts and
-    actively misleading at three thousand, where "a" matches most of the file
-    and comes back truncated to `limit` with no indication that it was cut.
+# Seniority ladder. Someone junior at the right company usually cannot make the
+# introduction; someone senior often can, even a step further out. Longer
+# phrases are checked first so "managing partner" does not score as "partner".
+_SENIORITY = (
+    (("chief executive", "ceo", "founder", "co-founder", "cofounder", "chairman",
+      "chairwoman", "chair", "president", "managing partner", "general partner",
+      "managing director", "cto", "cfo", "coo", "cmo", "chief"), 6),
+    (("partner", "vice president", "vp", "svp", "evp", "head of", "director",
+      "principal", "board member", "advisor"), 4),
+    (("lead", "senior", "staff", "manager", "founding"), 2),
+)
 
-    Counts are honest where a capped list is not: they say what is actually
-    there, so the decision to stop looking can be made on one call.
+
+def _terms(text: str) -> set[str]:
+    return {t for t in norm_name(text).split() if len(t) >= 3 and t not in _STOPWORDS}
+
+
+def _seniority(title: str) -> int:
+    t = norm_name(title)
+    for phrases, score in _SENIORITY:
+        if any(p in t for p in phrases):
+            return score
+    return 0
+
+
+def top_candidates(db: Session, owner_name: str, target: str,
+                   limit: int = 10) -> list[dict[str, Any]]:
+    """The connections most likely to be able to reach `target`.
+
+    Ranking is deliberately crude and local: it only has to produce a shortlist
+    worth reasoning about, not to pick the answer. Two signals are available
+    from a LinkedIn export and both matter:
+
+      * overlap with the target's world — their employer and the vocabulary of
+        their industry, matched against the contact's company and title
+      * seniority — a junior person at the right company usually cannot make an
+        introduction, while a senior one often can from a step further out
+
+    Everyone is returned when the network is smaller than `limit`; there is
+    nothing to choose between and dropping people would only hide options.
     """
     rows = list_for_owner(db, owner_name)
-    companies = Counter(
-        c.company.strip() for c in rows if c.company and c.company.strip()
-    )
-    titles = Counter(c.title.strip() for c in rows if c.title and c.title.strip())
-    return {
-        "count": len(rows),
-        "companies": companies.most_common(top),
-        "titles": titles.most_common(top),
-        "distinct_companies": len(companies),
-    }
+    if len(rows) <= limit:
+        ranked = rows
+    else:
+        want = _terms(target)
+        scored: list[tuple[int, str, Contact]] = []
+        for c in rows:
+            company_hits = len(want & _terms(c.company or ""))
+            title_hits = len(want & _terms(c.title or ""))
+            score = company_hits * 10 + title_hits * 4 + _seniority(c.title or "")
+            scored.append((-score, c.canonical_name, c))
+        scored.sort()
+        ranked = [c for _, _, c in scored[:limit]]
 
-
-def search(db: Session, owner_name: str, query: str, limit: int = 25) -> list[dict[str, Any]]:
-    """Substring search over one owner's contacts, by name, company or title.
-
-    Deliberately dumb: the caller is Claude, which will try several phrasings on
-    its own if the first returns nothing. Ranking puts company/title matches
-    after name matches so a query like "Sequoia" surfaces people at Sequoia
-    rather than anyone whose name happens to contain it.
-    """
-    q = norm_name(query)
-    if not q:
-        return []
-    rows = list_for_owner(db, owner_name)
-    scored: list[tuple[int, Contact]] = []
-    for c in rows:
-        name = c.norm_name
-        company = norm_name(c.company or "")
-        title = norm_name(c.title or "")
-        if q in name:
-            scored.append((0 if name.startswith(q) else 1, c))
-        elif q in company:
-            scored.append((2, c))
-        elif q in title:
-            scored.append((3, c))
-    scored.sort(key=lambda pair: (pair[0], pair[1].canonical_name))
     return [
         {
             "name": c.canonical_name,
@@ -239,5 +254,5 @@ def search(db: Session, owner_name: str, query: str, limit: int = 25) -> list[di
             "company": c.company or "",
             "connected_on": c.connected_on or "",
         }
-        for _, c in scored[:limit]
+        for c in ranked
     ]
