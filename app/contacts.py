@@ -19,6 +19,7 @@ import csv
 import io
 import re
 import unicodedata
+from collections import Counter
 from typing import Any, Iterable
 
 from sqlalchemy import delete, select
@@ -179,6 +180,31 @@ def to_profile_dict(c: Contact) -> dict[str, Any]:
         "notes": c.notes or "",
         "connected_on": c.connected_on or "",
         "linkedin_url": c.linkedin_url or "",
+    }
+
+
+def summarize(db: Session, owner_name: str, top: int = 12) -> dict[str, Any]:
+    """The shape of a network, rather than a slice of it.
+
+    Search alone gives no way to ask "what is in here", so a caller whose
+    guesses miss has nothing to do but guess differently — in practice, probing
+    single letters to enumerate the list. That is harmless at three contacts and
+    actively misleading at three thousand, where "a" matches most of the file
+    and comes back truncated to `limit` with no indication that it was cut.
+
+    Counts are honest where a capped list is not: they say what is actually
+    there, so the decision to stop looking can be made on one call.
+    """
+    rows = list_for_owner(db, owner_name)
+    companies = Counter(
+        c.company.strip() for c in rows if c.company and c.company.strip()
+    )
+    titles = Counter(c.title.strip() for c in rows if c.title and c.title.strip())
+    return {
+        "count": len(rows),
+        "companies": companies.most_common(top),
+        "titles": titles.most_common(top),
+        "distinct_companies": len(companies),
     }
 
 

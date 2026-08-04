@@ -143,10 +143,16 @@ NETWORK_TOOL = {
         "(their LinkedIn export). Anyone this returns is a confirmed "
         "first-degree connection of the starting person — that is direct "
         "evidence of a relationship, not a public claim to be verified.\n\n"
-        "Search by company ('Stripe'), by role ('general partner'), or by a "
+        "Call it with NO query first. That returns the shape of the network — "
+        "how many connections there are, and which companies and job titles "
+        "appear most — so you can see what is actually in it before guessing.\n\n"
+        "Then search by company ('Stripe'), by role ('general partner'), or by a "
         "person's name to check whether the starting person already knows them. "
         "Call it several times with different terms: it is a plain substring "
         "match, so 'Sequoia Capital' and 'Sequoia' return different things.\n\n"
+        "Do not probe with single letters to list the network — the no-query "
+        "call already tells you what is in it, and a one-letter search returns "
+        "an arbitrary truncated slice that will mislead you.\n\n"
         "Use this before mapping the starting person's side from public "
         "sources, and again for each promising name you find near the target."
     ),
@@ -155,10 +161,13 @@ NETWORK_TOOL = {
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Name, company, or job-title fragment to look for.",
+                "description": "Name, company, or job-title fragment. "
+                               "Omit or leave empty to summarise the whole network.",
             }
         },
-        "required": ["query"],
+        # Deliberately not required: omitting it is the documented way to ask
+        # what the network contains.
+        "required": [],
     },
 }
 
@@ -178,14 +187,39 @@ def _is_operator(person: str, operator_name: str) -> bool:
 def _network_tool(db, operator_name: str,
                   on_progress: Callable[[str], None] | None) -> ClientTool:
     def handler(payload: dict[str, Any]) -> str:
-        query = str(payload.get("query", "")).strip()
+        query = str(payload.get("query", "") or "").strip()
+
+        # No query: describe the network instead of matching against it.
+        if not query:
+            s = contacts.summarize(db, operator_name)
+            if on_progress:
+                on_progress(f"summarised own network — {s['count']} connection(s), "
+                            f"{s['distinct_companies']} distinct compan(ies)")
+            if not s["count"]:
+                return f"{operator_name} has no imported connections."
+            def _tally(pairs):
+                return ", ".join(f"{name} ({n})" for name, n in pairs) or "none recorded"
+            return (
+                f"{operator_name} has {s['count']} connection(s) across "
+                f"{s['distinct_companies']} compan(ies).\n"
+                f"Most common companies: {_tally(s['companies'])}.\n"
+                f"Most common titles: {_tally(s['titles'])}.\n"
+                "Search by company, title or name for the specific people."
+            )
+
         hits = contacts.search(db, operator_name, query, limit=25)
         if on_progress:
             on_progress(f'searched own network for "{query}" — {len(hits)} match(es)')
         if not hits:
             return (f'No connections of {operator_name} match "{query}". '
                     "Try a different company, role, or spelling.")
-        lines = [f"{len(hits)} connection(s) of {operator_name} matching \"{query}\":"]
+        # Say so when the cap was hit. A silently truncated list reads as "this
+        # is everyone", which is how a narrow slice turns into a wrong
+        # conclusion about the whole network.
+        capped = " (showing the first 25 — narrow the query for the rest)" \
+            if len(hits) >= 25 else ""
+        lines = [f"{len(hits)} connection(s) of {operator_name} "
+                 f"matching \"{query}\"{capped}:"]
         for h in hits:
             bits = [h["name"]]
             if h["title"]:

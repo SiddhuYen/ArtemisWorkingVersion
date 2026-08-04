@@ -536,12 +536,20 @@ def connect(req: dict, request: Request) -> dict:
     a = _str_field(req, "person_a")
     b = _str_field(req, "person_b")
     ask = _str_field(req, "ask") or "N/A"
+    context_a = _str_field(req, "context_a")
+    context_b = _str_field(req, "context_b")
     if not a or not b:
         raise HTTPException(status_code=400, detail="person_a and person_b required")
+    if not context_a or not context_b:
+        raise HTTPException(
+            status_code=400,
+            detail="context_a and context_b are required — a bare name resolves "
+                   "to the wrong person and the search fails silently, citing real "
+                   "sources about somebody else",
+        )
     return _start_build_job(
         request, "connect", _run_connect_job,
-        (a, b, _str_field(req, "context_a"), _str_field(req, "context_b"), ask,
-         _str_field(req, "owner_name")))
+        (a, b, context_a, context_b, ask, _str_field(req, "owner_name")))
 
 
 @app.post("/discover")

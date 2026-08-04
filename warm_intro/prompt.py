@@ -42,11 +42,34 @@ do not have to source publicly. Being in that list IS the evidence: they are
 directly connected, which is a stronger fact than anything you could infer from
 a web page.
 
-Use it. Search it early — before mapping the starting side from public sources —
-and search it repeatedly: by the target's employer, by their previous employers,
-by their industry, by the names of everyone you found in the target's layer 1 and
-layer 2. A first-degree connection who sits one step from the target is the best
-possible route, and it will not appear in any public source.
+Work it in this order:
+
+1. Call the tool with NO query. That returns the shape of the network — size,
+   the companies and titles that appear most. Now you know what you are working
+   with instead of guessing at it.
+2. Map the target's world as usual: their employer, their board, their funders,
+   their close colleagues.
+3. Look at the network for the people most plausibly close to that world. Not
+   only an exact employer match — someone senior in the same industry, at a firm
+   that invests in or sells to the target's company, or who sits on boards of
+   that kind, is a real candidate. Pick the handful that are most promising.
+4. Now go back to the web and check those specific people against the target.
+   Search "<connection> <target>", their shared boards, co-investments, shared
+   employers, joint announcements, quotes about each other. You are testing a
+   named pair, which is a far better search than casting around the target's
+   circle in the abstract.
+5. The route is the first candidate where step 4 turns up a real, citable tie.
+
+Do not conclude there is no route just because nobody in the network works at
+the target's company. That is the rarest case, not the normal one. The normal
+one is a connection two steps away — a partner at a firm on the target's cap
+table, an executive at a company the target's company acquired, someone who
+served on a board with one of the target's close colleagues. Check the plausible
+candidates before giving up.
+
+Equally, do not force it. If you check the promising candidates and none of them
+has a documented tie to the target or to anyone in the target's layer 1, say so
+and return the public-only route, or no route at all.
 
 For a hop taken from that list, set source_type to "operator_network",
 source_url to "" and evidence_date to the connected_on date the tool returns (or

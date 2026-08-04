@@ -2585,6 +2585,17 @@ async function execBoardRoute() {
   }
   const contextA = (document.getElementById('bvrContextA')?.value || '').trim();
   const contextB = (document.getElementById('bvrContextB')?.value || '').trim();
+  // Required. A bare name resolves to the wrong person more often than not —
+  // 'Dana White' alone is several people — and the failure is silent: the search
+  // succeeds, cites real sources, and describes somebody else entirely. Checked
+  // before the call so nobody is billed for a route to the wrong person.
+  const missingCtx = !contextA ? 'bvrContextA' : (!contextB ? 'bvrContextB' : null);
+  if (missingCtx) {
+    lbl.style.display='block'; lbl.textContent='// CONTEXT REQUIRED';
+    resultEl.innerHTML = `<div class="bvr-no-path">Add the role and organisation for both people — e.g. <i>"CEO of TKO Group Holdings"</i>. A bare name resolves to the wrong person and the search will look successful while describing somebody else.</div>`;
+    document.getElementById(missingCtx)?.focus();
+    return;
+  }
   // Optional. Blank is sent as "N/A" rather than omitted, so the hop test reads
   // it as "no particular request" instead of treating the field as missing.
   const ask = (document.getElementById('bvrAsk')?.value || '').trim() || 'N/A';
