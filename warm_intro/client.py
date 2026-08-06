@@ -1,4 +1,4 @@
-"""The pathfinder call: cached prefix, bounded search, verified sources."""
+"""The pathfinder call: cached prefix, bounded search, schema-checked result."""
 
 from __future__ import annotations
 
@@ -13,17 +13,11 @@ from anthropic import Anthropic
 from .config import PathfinderConfig
 from .parsing import JSONExtractionError, collect_text, extract_json_object
 from .prompt import REFORMAT_INSTRUCTION, SYSTEM_PROMPT
-from .schema import ValidationReport, downgrade, drop_path, lint_input, validate_and_repair
-from .verify import UrlCheck, verify_hops
+from .schema import lint_input, validate_and_repair
 
 log = logging.getLogger("warm_intro")
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
-# `source_type` marking a hop attested by the starting person's own imported
-# connections rather than by a public page. Kept in step with the value the
-# system prompt asks for; hops carrying it skip URL verification.
-OPERATOR_SOURCE = "operator_network"
 
 
 def _progress(cfg: "PathfinderConfig", line: str) -> None:
@@ -146,7 +140,6 @@ class PathResult:
     data: dict[str, Any]
     usage: dict[str, Any]
     validation: dict[str, list[str]]
-    url_checks: list[dict[str, Any]]
     input_warnings: list[str]
     raw_text: str
 
@@ -155,7 +148,6 @@ class PathResult:
             "result": self.data,
             "usage": self.usage,
             "validation": self.validation,
-            "url_checks": self.url_checks,
             "input_warnings": self.input_warnings,
         }
 
@@ -465,42 +457,7 @@ def find_path(
     # 1. Shape and rating rules, before anything reads the object.
     report = validate_and_repair(data, strict=strict)
 
-    # 2. Source verification — the check that actually protects the caller.
-    url_checks: list[UrlCheck] = []
-    if cfg.verify.enabled and isinstance(data.get("path"), list) and data.get("hops"):
-        hops = data["hops"]
-        # A hop attested by the starting person's own network has no public URL
-        # by design — the prompt tells the model to leave source_url empty for
-        # those. Running the URL check over it fetched "", failed, and
-        # downgraded the hop for following instructions, which dragged the whole
-        # route's rating down to the weakest thing in it. There is nothing to
-        # verify here: the evidence is the operator's own export, and we are the
-        # ones who handed it to the model.
-        verifiable = [(i, h) for i, h in enumerate(hops)
-                      if isinstance(h, dict) and h.get("source_type") != OPERATOR_SOURCE]
-        attested = len(hops) - len(verifiable)
-        if verifiable:
-            note = f"verifying {len(verifiable)} cited source(s)"
-            if attested:
-                note += f" ({attested} from your own network, no source to check)"
-            _progress(cfg, note)
-            url_checks = verify_hops(
-                [h for _, h in verifiable],
-                cfg.verify,
-                on_progress=(lambda line: _progress(cfg, line)) if cfg.progress_sink else None,
-            )
-            _apply_verification(
-                data, list(zip((i for i, _ in verifiable), url_checks)), report)
-        elif attested:
-            _progress(cfg, f"no public sources to check — all {attested} hop(s) "
-                           "come from your own network")
-        # Strengths and possibly the path itself changed; re-derive the rating.
-        report2 = validate_and_repair(data, strict=False)
-        report.errors.extend(report2.errors)
-        report.repairs.extend(report2.repairs)
-        report.warnings.extend(report2.warnings)
-
-    # 3. searches_used is model-reported; replace it with what actually happened.
+    # 2. searches_used is model-reported; replace it with what actually happened.
     claimed = data.get("searches_used")
     if claimed != usage.web_searches:
         report.repairs.append(
@@ -523,7 +480,7 @@ def find_path(
     _progress(
         cfg,
         f"result: {rating}"
-        + ("" if data.get("path") else " — no sourced route survived verification"),
+        + ("" if data.get("path") else " — no hop could be sourced"),
     )
     _emit_usage(cfg, usage, payload, ok=True, rating=rating)
 
@@ -531,89 +488,9 @@ def find_path(
         data=data,
         usage=usage.as_dict(cfg.pricing),
         validation=report.as_dict(),
-        url_checks=[c.as_dict() for c in url_checks],
         input_warnings=input_warnings,
         raw_text=raw_text,
     )
-
-
-def verify_existing(
-    data: dict[str, Any],
-    *,
-    config: PathfinderConfig | None = None,
-    strict: bool = False,
-) -> PathResult:
-    """Run the schema and source-verification layers over an existing result.
-
-    Makes no API call. Two uses: re-checking a stored path before someone acts on
-    it — links rot and roles end, so a path verified last quarter is a claim
-    again today — and exercising the verifier without credentials.
-    """
-    cfg = config or PathfinderConfig()
-    data = json.loads(json.dumps(data))  # don't mutate the caller's object
-
-    report = validate_and_repair(data, strict=strict)
-    url_checks: list[UrlCheck] = []
-    if cfg.verify.enabled and isinstance(data.get("path"), list) and data.get("hops"):
-        url_checks = verify_hops(data["hops"], cfg.verify)
-        _apply_verification(data, url_checks, report)
-        second = validate_and_repair(data, strict=False)
-        report.errors.extend(second.errors)
-        report.repairs.extend(second.repairs)
-        report.warnings.extend(second.warnings)
-
-    if strict and report.errors:
-        raise PathfinderError("; ".join(report.errors))
-
-    return PathResult(
-        data=data,
-        usage=UsageRecord().as_dict(cfg.pricing),
-        validation=report.as_dict(),
-        url_checks=[c.as_dict() for c in url_checks],
-        input_warnings=[],
-        raw_text="",
-    )
-
-
-def _apply_verification(
-    data: dict[str, Any],
-    checks: list[tuple[int, UrlCheck]],
-    report: ValidationReport,
-) -> None:
-    """Fold URL-check verdicts into hop strengths, dropping the path if needed.
-
-    Takes (hop_index, check) pairs rather than a parallel list: hops that need no
-    verification are skipped upstream, so positions no longer line up.
-    """
-    hops = data.get("hops") or []
-    for index, check in checks:
-        if index >= len(hops):
-            continue
-        hop = hops[index]
-        if not isinstance(hop, dict):
-            continue
-        detail = check.note or check.error or check.verdict
-
-        if check.action == "drop":
-            reason = (
-                f"source verification failed for hop "
-                f"{hop.get('from')!r} -> {hop.get('to')!r}: {detail} ({check.url})"
-            )
-            report.warnings.append(reason)
-            drop_path(data, reason)
-            return
-
-        if check.action == "downgrade":
-            before = hop.get("strength", "weak")
-            hop["strength"] = downgrade(before, "weak")
-            note = (
-                f"hop {hop.get('from')!r} -> {hop.get('to')!r} downgraded "
-                f"{before} -> {hop['strength']}: {detail} ({check.url})"
-            )
-            report.repairs.append(note)
-            wp = data.setdefault("weak_points", [])
-            if isinstance(wp, list) and note not in wp:
-                wp.append(note)
 
 
 def _emit_usage(

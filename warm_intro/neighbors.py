@@ -5,11 +5,10 @@ around B at all" — the layer-1 expansion its METHOD section performs internall
 but never exposes, because its output schema is a single path.
 
 Same discipline, same machinery: one cached system prompt, Claude's own web
-search under a hard `max_uses` budget, then every cited URL re-fetched and
-checked for both names before the connection is allowed to stand. A connection
-whose citation does not name both people is dropped, not downgraded — exactly as
-in the pathfinder, and for the same reason: the caller is about to treat this as
-fact about a real person.
+search under a hard `max_uses` budget, and a shape check over what comes back.
+Each connection still has to name a source; nothing re-fetches it, so the
+`source_url` on a connection is the model's claim about where it read that, and
+the caller is the one who reads it.
 """
 
 from __future__ import annotations
@@ -34,8 +33,7 @@ from .client import (
 )
 from .config import PathfinderConfig
 from .parsing import JSONExtractionError, collect_text, extract_json_object
-from .schema import STRENGTHS, downgrade
-from .verify import UrlCheck, verify_hops
+from .schema import STRENGTHS
 
 NEIGHBORS_SYSTEM_PROMPT = """\
 You map one person's closest public professional connections, and you return
@@ -142,8 +140,6 @@ REFORMAT_INSTRUCTION = (
 class NeighborResult:
     data: dict[str, Any]
     usage: dict[str, Any]
-    url_checks: list[dict[str, Any]]
-    dropped: list[str]
 
 
 def build_system(cfg: PathfinderConfig) -> list[dict[str, Any]]:
@@ -230,46 +226,11 @@ def find_neighbors(
     data.setdefault("person", person)
     data.setdefault("person_context", "")
 
-    # Verification. Each connection is a one-hop claim, so it verifies exactly
-    # like a pathfinder hop: the cited page must name both people.
-    dropped: list[str] = []
-    checks: list[UrlCheck] = []
-    conns = data["connections"]
-    if cfg.verify.enabled and conns:
-        _progress(cfg, f"verifying {len(conns)} cited source(s)")
-        pseudo_hops = [
-            {"from": data["person"], "to": c["name"], "source_url": c.get("source_url", "")}
-            for c in conns
-        ]
-        checks = verify_hops(
-            pseudo_hops,
-            cfg.verify,
-            on_progress=(lambda line: _progress(cfg, line)) if cfg.progress_sink else None,
-        )
-        kept: list[dict[str, Any]] = []
-        for c, check in zip(conns, checks):
-            if check.action == "drop":
-                dropped.append(
-                    f"{c['name']}: {check.note or check.error or check.verdict}"
-                )
-                continue
-            if check.action == "downgrade":
-                c["strength"] = downgrade(c.get("strength", "weak"), "weak")
-                c["verification"] = check.verdict
-            else:
-                c["verification"] = "verified"
-            kept.append(c)
-        data["connections"] = kept
-
     data["searches_used"] = usage.web_searches
     if notes:
         data["notes"] = list(data.get("notes") or []) + notes
-    if dropped:
-        data["notes"] = list(data.get("notes") or []) + [
-            f"dropped {len(dropped)} unverifiable connection(s)"
-        ]
 
-    _progress(cfg, f"result: {len(data['connections'])} verified connection(s)")
+    _progress(cfg, f"result: {len(data['connections'])} sourced connection(s)")
     if cfg.usage_sink:
         rec = usage.as_dict(cfg.pricing)
         rec.update(ok=True, kind="neighbors", person=person)
@@ -278,8 +239,6 @@ def find_neighbors(
     return NeighborResult(
         data=data,
         usage=usage.as_dict(cfg.pricing),
-        url_checks=[c.as_dict() for c in checks],
-        dropped=dropped,
     )
 
 

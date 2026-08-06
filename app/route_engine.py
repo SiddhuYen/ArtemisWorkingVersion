@@ -6,13 +6,18 @@ operator, so it is worth stating plainly:
 
   old: expand both people's networks with a search API, meet in the middle, and
        return every path found — many routes, ranked, of varying quality.
-  new: research the public professional record for ONE well-sourced route, then
-       independently re-fetch every cited page and confirm it names both people
-       in the hop. At most one route, and it may legitimately come back empty.
+  new: research the public professional record for ONE well-sourced route, gated
+       on whether each endpoint is in that record at all. At most one route, and
+       it may legitimately come back empty.
 
 So this endpoint now returns 0 or 1 routes where it used to return several. That
-is the intended trade: a single verified route is worth more than five plausible
+is the intended trade: a single sourced route is worth more than five plausible
 ones when the next step is a real person spending real social capital.
+
+When there is no route, `warm_intro.verdict` says which kind of nothing it is —
+NEED_DISAMBIGUATION is fixed by adding a role to the context box, NO_PATH is not,
+and TARGET_MAP_ONLY carries named people close to the target in
+`warm_intro.approach_surface` even though nothing connects to them yet.
 
 The wire contract to the UI is unchanged — {connected, paths[], reason} with
 path nodes carrying label / relationship_from_previous / via_orgs / evidence /
@@ -129,17 +134,32 @@ def _to_ui_path(data: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+# What each non-PATH_FOUND verdict means to someone looking at the board. The
+# distinction is worth keeping: NEED_DISAMBIGUATION is fixed by typing a role
+# into the context box, NO_PATH is not fixed by anything the operator can type,
+# and TARGET_MAP_ONLY means we mapped the target but have nothing to route from.
+_VERDICT_PREFIX = {
+    "NEED_DISAMBIGUATION": "need a qualifier",
+    "TARGET_MAP_ONLY": "mapped the target, but no route in",
+    "INVALID_REQUEST": "invalid request",
+}
+
+
 def _reason(data: dict[str, Any]) -> str:
     """Why there is no route, in the operator's words rather than a status code."""
     weak = [w for w in (data.get("weak_points") or []) if isinstance(w, str)]
+    detail = ""
     if weak:
-        return weak[0]
-    considered = data.get("clusters_considered") or []
-    if considered and isinstance(considered[0], dict):
-        why = considered[0].get("why_dropped")
-        if why:
-            return str(why)
-    return "no hop could be sourced to a named, public professional connection"
+        detail = weak[0]
+    else:
+        considered = data.get("clusters_considered") or []
+        if considered and isinstance(considered[0], dict):
+            detail = str(considered[0].get("why_dropped") or "")
+    if not detail:
+        detail = "no hop could be sourced to a named, public professional connection"
+
+    prefix = _VERDICT_PREFIX.get(str(data.get("verdict")))
+    return f"{prefix} — {detail}" if prefix else detail
 
 
 def _is_operator(person: str, operator_name: str) -> bool:
@@ -225,14 +245,17 @@ def run_route(
 
     data = result.data
     diagnostics = {
+        "verdict": data.get("verdict"),
         "rating": data.get("rating"),
         "weak_points": data.get("weak_points") or [],
+        # Named people close to the target, returned when there was nothing to
+        # route from. Empty for every other verdict.
+        "approach_surface": data.get("approach_surface") or [],
         "first_action": data.get("first_action") or {},
         "clusters_considered": data.get("clusters_considered") or [],
         "target_context": data.get("target_context", ""),
         "searches_used": data.get("searches_used"),
         "usage": result.usage,
-        "url_checks": result.url_checks,
         "validation": result.validation,
     }
 
@@ -314,9 +337,7 @@ def run_discover(
         "warm_intro": {
             "person_context": data.get("person_context", ""),
             "notes": data.get("notes") or [],
-            "dropped": result.dropped,
             "searches_used": data.get("searches_used"),
             "usage": result.usage,
-            "url_checks": result.url_checks,
         },
     }

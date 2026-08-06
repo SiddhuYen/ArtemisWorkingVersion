@@ -22,12 +22,26 @@ STRENGTHS = ("weak", "moderate", "strong")
 _STRENGTH_RANK = {s: i for i, s in enumerate(STRENGTHS)}
 RATINGS = ("strong", "moderate", "weak", "dropped")
 
+# The Step 2 outcome. Only PATH_FOUND carries a path; the other four are the
+# reasons there isn't one, kept distinct because they are differently
+# actionable — NEED_DISAMBIGUATION is fixed by adding a qualifier, NO_PATH is
+# not fixed by anything the operator can type.
+VERDICTS = (
+    "PATH_FOUND",
+    "TARGET_MAP_ONLY",
+    "NO_PATH",
+    "NEED_DISAMBIGUATION",
+    "INVALID_REQUEST",
+)
+
 TOP_LEVEL_KEYS = (
+    "verdict",
     "target",
     "target_context",
     "path",
     "hops",
     "rating",
+    "approach_surface",
     "weak_points",
     "first_action",
     "clusters_considered",
@@ -36,6 +50,11 @@ TOP_LEVEL_KEYS = (
 
 MAX_INTERMEDIARIES = 2
 MAX_PATH_NODES = MAX_INTERMEDIARIES + 2  # start + intermediaries + target
+
+# `source_type` marking a hop attested by the starting person's own imported
+# connections rather than by a public page. Kept in step with the value the
+# system prompt asks for. These hops carry no `source_url` by design.
+OPERATOR_SOURCE = "operator_network"
 
 # The SCOPE LIMIT section forbids these. We flag rather than strip: silently
 # editing a field would hide a prompt regression from whoever is on call.
@@ -107,6 +126,7 @@ def drop_path(data: dict[str, Any], reason: str) -> None:
     data["path"] = None
     data["hops"] = []
     data["rating"] = "dropped"
+    data["verdict"] = "NO_PATH"
     data["first_action"] = {"who": "", "contacts": "", "ask": ""}
 
     wp = data.get("weak_points")
@@ -125,12 +145,13 @@ def validate_and_repair(data: dict[str, Any], *, strict: bool = False) -> Valida
         if key not in data:
             r.errors.append(f"missing required key: {key}")
 
-    for key in ("target", "target_context", "rating"):
+    for key in ("verdict", "target", "target_context", "rating"):
         if key in data and not _is_str(data[key]):
             r.errors.append(f"{key} must be a string, got {type(data.get(key)).__name__}")
 
     # --- normalise container types ------------------------------------------
-    for key, default in (("hops", []), ("weak_points", []), ("clusters_considered", [])):
+    for key, default in (("hops", []), ("weak_points", []),
+                         ("approach_surface", []), ("clusters_considered", [])):
         if not isinstance(data.get(key), list):
             r.repairs.append(f"{key} was {type(data.get(key)).__name__}; coerced to []")
             data[key] = default
@@ -186,9 +207,15 @@ def validate_and_repair(data: dict[str, Any], *, strict: bool = False) -> Valida
             r.errors.append(
                 f"hops[{i}].strength is {hop.get('strength')!r}, expected one of {STRENGTHS}"
             )
+        # A hop from the starting person's own network has no public URL by
+        # design — the prompt tells the model to leave it empty — so an empty
+        # string there is the contract being followed, not broken. Any other
+        # empty source_url is a hop claiming a public source it did not cite.
         url = hop.get("source_url")
-        if _is_str(url) and not url.lower().startswith(("http://", "https://")):
-            r.errors.append(f"hops[{i}].source_url is not an http(s) URL: {url!r}")
+        attested = hop.get("source_type") == OPERATOR_SOURCE
+        if _is_str(url) and not (attested and url == ""):
+            if not url.lower().startswith(("http://", "https://")):
+                r.errors.append(f"hops[{i}].source_url is not an http(s) URL: {url!r}")
 
     # --- path/hop consistency ------------------------------------------------
     if isinstance(path, list) and path and hops:
@@ -210,6 +237,51 @@ def validate_and_repair(data: dict[str, Any], *, strict: bool = False) -> Valida
                         f"hops[{i}].to ({hop.get('to')!r}) does not match "
                         f"path[{i + 1}].name ({path[i + 1].get('name')!r})"
                     )
+
+    # --- approach surface -----------------------------------------------------
+    surface = data["approach_surface"]
+    for i, entry in enumerate(surface):
+        if not isinstance(entry, dict):
+            r.errors.append(f"approach_surface[{i}] is not an object")
+            continue
+        for f in ("name", "locator", "tie"):
+            if not _is_str(entry.get(f)):
+                r.errors.append(f"approach_surface[{i}].{f} missing or not a string")
+
+    # --- verdict rules (mechanically derivable → repair) ---------------------
+    # The verdict and the path are two statements of the same fact, so a
+    # disagreement between them is repairable in exactly one direction: the
+    # path is the evidence, the verdict is the label. A model that finds a
+    # chain and mislabels it is common; a model that emits PATH_FOUND with no
+    # path has not found anything.
+    verdict = data.get("verdict")
+    if verdict not in VERDICTS:
+        derived = "PATH_FOUND" if path else "NO_PATH"
+        r.repairs.append(f"verdict was {verdict!r}; set to {derived!r} (derived from path)")
+        data["verdict"] = verdict = derived
+
+    if path is None and verdict == "PATH_FOUND":
+        r.repairs.append("verdict was 'PATH_FOUND' with a null path; set to 'NO_PATH'")
+        data["verdict"] = verdict = "NO_PATH"
+    elif path is not None and verdict != "PATH_FOUND":
+        r.repairs.append(f"verdict was {verdict!r} with a path present; set to 'PATH_FOUND'")
+        data["verdict"] = verdict = "PATH_FOUND"
+
+    if verdict == "TARGET_MAP_ONLY":
+        # The prompt's own floor: fewer than three real names means the target
+        # was not actually mapped, and padding to a count is where invented
+        # people appear. Say so rather than shipping a one-name surface.
+        if len(surface) < 3:
+            r.errors.append(
+                f"verdict is 'TARGET_MAP_ONLY' but approach_surface has "
+                f"{len(surface)} entr{'y' if len(surface) == 1 else 'ies'}; "
+                f"3 is the minimum (else NO_PATH)"
+            )
+    elif surface:
+        r.repairs.append(
+            f"approach_surface was populated with verdict {verdict!r}; cleared"
+        )
+        data["approach_surface"] = surface = []
 
     # --- rating rules (mechanically derivable → repair) ----------------------
     if path is None:

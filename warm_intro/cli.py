@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .client import PathfinderError, RefusalError, find_path, verify_existing
-from .config import PathfinderConfig, VerifyConfig
+from .client import PathfinderError, RefusalError, find_path
+from .config import PathfinderConfig
 
 
 def load_dotenv(path: Path | None = None) -> list[str]:
@@ -95,17 +95,10 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--cache-ttl", choices=["5m", "1h"], default=None)
 
     out = p.add_argument_group("output")
-    out.add_argument("--no-verify", action="store_true", help="skip source_url verification")
-    out.add_argument(
-        "--verify-only",
-        action="store_true",
-        help="no API call: read a result object on stdin and re-run the schema and "
-        "source-verification layers over it (needs no credentials)",
-    )
     out.add_argument(
         "--envelope",
         action="store_true",
-        help="print result plus usage, validation report, and per-URL checks",
+        help="print result plus usage and the validation report",
     )
     out.add_argument("--strict", action="store_true", help="exit non-zero on any schema violation")
     out.add_argument("--indent", type=int, default=2)
@@ -149,26 +142,6 @@ def main(argv: list[str] | None = None) -> int:
     for name in load_dotenv():
         logging.getLogger("warm_intro").debug("loaded %s from .env", name)
 
-    if args.verify_only:
-        raw = sys.stdin.read().strip()
-        if not raw:
-            print("--verify-only expects a result JSON object on stdin", file=sys.stderr)
-            return 2
-        try:
-            existing = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            print(f"stdin is not valid JSON: {exc}", file=sys.stderr)
-            return 2
-        cfg = PathfinderConfig(verify=VerifyConfig(enabled=not args.no_verify))
-        try:
-            result = verify_existing(existing, config=cfg, strict=args.strict)
-        except PathfinderError as exc:
-            print(json.dumps({"error": type(exc).__name__, "message": str(exc)}), file=sys.stderr)
-            return 1
-        print(json.dumps(result.as_envelope() if args.envelope else result.data,
-                         indent=args.indent, ensure_ascii=False))
-        return 0
-
     try:
         payload = _read_payload(args)
     except SystemExit as exc:
@@ -184,7 +157,6 @@ def main(argv: list[str] | None = None) -> int:
         enable_fallbacks=not args.no_fallbacks,
         cache_ttl=args.cache_ttl,
         thinking_display="summarized" if args.show_thinking else None,
-        verify=VerifyConfig(enabled=not args.no_verify),
     )
 
     try:

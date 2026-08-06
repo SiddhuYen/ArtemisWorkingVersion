@@ -1,8 +1,7 @@
 # Artemis V6 — pure wrapper around Claude with web search.
 # No search-API providers, no spaCy, no HTML-extraction stack: search belongs to
-# Claude's own web_search tool, and source verification uses httpx directly.
+# Claude's own web_search tool. Nothing here fetches a page itself.
 anthropic>=0.70
-httpx>=0.27
 fastapi>=0.110
 uvicorn[standard]>=0.27
 SQLAlchemy>=2.0

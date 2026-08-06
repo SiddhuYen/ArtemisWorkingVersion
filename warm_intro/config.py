@@ -1,19 +1,9 @@
-"""Configuration for the pathfinder and the source verifier."""
+"""Configuration for the pathfinder."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Mapping
-
-Verdict = Literal[
-    "verified",  # page fetched, both names present
-    "names_missing",  # page fetched with real text, but a name is absent
-    "soft_source",  # aggregator / contact-database domain
-    "unverifiable",  # fetched but unreadable (PDF, JS shell, too little text)
-    "unreachable",  # DNS/TLS/timeout/4xx/5xx
-]
-
-Action = Literal["keep", "downgrade", "drop"]
+from typing import Callable, Literal
 
 
 @dataclass(frozen=True)
@@ -29,68 +19,6 @@ class Pricing:
     output_per_mtok: float = 25.00
     cache_write_multiplier: float = 1.25
     cache_read_multiplier: float = 0.10
-
-
-@dataclass(frozen=True)
-class VerifyConfig:
-    """Server-side `source_url` verification.
-
-    This is the highest-value check in the wrapper: it is the only thing standing
-    between a plausible-sounding hop and a real person's inbox.
-    """
-
-    enabled: bool = True
-    timeout_s: float = 15.0
-    max_bytes: int = 2_000_000
-    max_concurrency: int = 6
-    # Identify honestly. This is not politeness theatre: sec.gov and the
-    # Wikimedia sites both serve 403 to a spoofed browser User-Agent and 200 to
-    # a descriptive one, and those are exactly the primary sources the prompt
-    # tells the model to prefer. A fake Chrome UA turns verifiable SEC filings
-    # into `unreachable` downgrades. Put a real contact address here.
-    user_agent: str = "warm-intro/0.1 (source verification; contact: set-me@example.com)"
-    # Below this many characters of extracted text we cannot honestly say a name
-    # is absent — the page is a JS shell, a paywall stub, or a redirect notice.
-    # Calling that `names_missing` would drop good paths on a rendering quirk.
-    min_text_chars: int = 400
-    # Domains the system prompt calls insufficient on their own. Substring match
-    # against the final host.
-    soft_domains: tuple[str, ...] = (
-        "linkedin.com",
-        "rocketreach.co",
-        "zoominfo.com",
-        "apollo.io",
-        "signalhire.com",
-        "lusha.com",
-        "contactout.com",
-        "peoplefinder",
-        "spokeo.com",
-    )
-    # What each verdict does to the hop it backs.
-    #
-    # Nothing drops by default. Verification annotates a route; it does not veto
-    # one. An earlier default dropped the whole path on `names_missing`, which
-    # was too blunt in practice: a citation can be a real, correct source for a
-    # relationship and still fail a literal both-names-on-the-page test — the
-    # page renders a name in an image, the relationship is described a paragraph
-    # later under a title rather than a name, the filing is an exhibit that
-    # incorporates the roster by reference. Throwing the route away in those
-    # cases loses a good answer and reports "no route found", which is the one
-    # outcome an operator cannot act on or check.
-    #
-    # So a failed check now weakens the hop and says why, and the route is still
-    # returned with its evidence attached for a human to judge. Set
-    # `names_missing` back to "drop" if you would rather have silence than a
-    # route whose source you have to read yourself.
-    actions: Mapping[Verdict, Action] = field(
-        default_factory=lambda: {
-            "verified": "keep",
-            "names_missing": "downgrade",
-            "soft_source": "downgrade",
-            "unverifiable": "downgrade",
-            "unreachable": "downgrade",
-        }
-    )
 
 
 @dataclass(frozen=True)
@@ -136,7 +64,6 @@ class PathfinderConfig:
     cache_ttl: Literal["1h", "5m"] | None = None
 
     pricing: Pricing = field(default_factory=Pricing)
-    verify: VerifyConfig = field(default_factory=VerifyConfig)
 
     # Called once per find_path() with the usage dict. Wire this to your metrics
     # sink; token counts vary a lot with how many searches the model runs, and
@@ -144,9 +71,9 @@ class PathfinderConfig:
     usage_sink: Callable[[dict], None] | None = None
 
     # Called with short human-readable progress lines as the run proceeds. Every
-    # line reports something that actually happened (a completed model turn, a
-    # source fetched and its verdict) rather than a predicted stage, so a UI can
-    # show a live transcript without inventing activity. Must not raise.
+    # line reports something that actually happened (a completed model turn, the
+    # real search count) rather than a predicted stage, so a UI can show a live
+    # transcript without inventing activity. Must not raise.
     progress_sink: Callable[[str], None] | None = None
 
     def __post_init__(self) -> None:
