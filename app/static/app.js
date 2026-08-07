@@ -132,8 +132,12 @@ async function loadBoardsFromBackend() {
   } catch (e) { console.error('Failed to load boards', e); }
 }
 async function loadContactsFromBackend() {
+  // Scoped to the operator, like loadMyContactCount above. This used to fetch
+  // unscoped, which returned every operator's contacts rather than this one's.
+  if (!hasOperatorName()) { db.contacts = []; await loadMyContactCount(); return; }
   try {
-    const rows = await (await fetch('/network/profiles')).json();
+    const rows = await (await fetch(
+      '/network/profiles?owner_name=' + encodeURIComponent(operatorName()))).json();
     const links = _localLinks(), photos = _localPhotos();
     db.contacts = rows.map(p => ({
       id: p.id, name: p.canonical_name, role: (p.titles||[])[0]||'', company: (p.companies||[])[0]||'',
@@ -2086,9 +2090,12 @@ function unlinkContacts(fromId, toId) {
 async function clearAllContacts() {
   const n = (db.contacts||[]).length;
   if (!n) return;
-  if (!confirm(`Delete all ${n} contacts? This cannot be undone.`)) return;
+  if (!hasOperatorName()) return;   // nothing of yours to clear
+  if (!confirm(`Delete all ${n} of your contacts? This cannot be undone.`)) return;
   try {
-    await fetch('/network/profiles', { method: 'DELETE' });
+    // Scoped: unscoped, this deleted every operator's contacts, not just yours.
+    await fetch('/network/profiles?owner_name=' + encodeURIComponent(operatorName()),
+                { method: 'DELETE' });
     localStorage.removeItem('artemis_contact_links');
     localStorage.removeItem('artemis_contact_photos');
     db.contacts = [];

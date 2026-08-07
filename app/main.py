@@ -749,20 +749,40 @@ def list_people() -> list:
     return []
 
 
+def _require_owner_name(owner_name: str) -> str:
+    """Reject an owner-less read or delete.
+
+    These rows are somebody's first-degree connections and carry real personal
+    data — names, employers, emails, LinkedIn URLs — for people who never used
+    this app. Defaulting the scope to "everyone" turned a missing query
+    parameter into a dump of every operator's contacts, and on the delete side
+    into a wipe of the whole table. The upload path already refuses an owner-less
+    write; read and delete now agree with it."""
+    if not owner_name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="owner_name is required — contacts are only usable as "
+                   "first-degree ties for the person who uploaded them",
+        )
+    return owner_name
+
+
 @app.get("/network/profiles")
 def list_network_profiles(owner_name: str = "",
                           db: Session = Depends(get_boards_db)) -> list:
     """The operator's imported contacts.
 
-    `owner_name` scopes the read. These rows are only meaningful as somebody's
-    first-degree connections, so an unscoped list is for display only — never
-    for routing."""
+    `owner_name` scopes the read and is required — see `_require_owner_name`."""
+    _require_owner_name(owner_name)
     return [contacts.to_profile_dict(c) for c in contacts.list_for_owner(db, owner_name)]
 
 
 @app.delete("/network/profiles")
 def delete_network_profiles(owner_name: str = "",
                             db: Session = Depends(get_boards_db)) -> dict:
+    """Delete one operator's contacts. `owner_name` is required: without it this
+    deleted every row in the table rather than that person's."""
+    _require_owner_name(owner_name)
     return {"deleted": contacts.delete_for_owner(db, owner_name)}
 
 

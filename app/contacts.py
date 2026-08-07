@@ -149,10 +149,22 @@ def ingest(db: Session, owner_name: str, rows: Iterable[dict[str, Any]],
     return {"created": created, "updated": updated, "skipped": skipped}
 
 
+# `ingest` refuses an owner-less write, and these two refuse an owner-less read
+# and delete for the same reason: a row is only meaningful as somebody's
+# first-degree connection. The scoping is also what keeps one operator's
+# contacts out of another's hands — an unfiltered query here is every operator's
+# imported contacts, and an unfiltered DELETE is the whole table rather than one
+# person's rows. Requiring the owner makes both impossible to express.
+def _require_owner(owner_name: str | None) -> str:
+    owner = norm_name(owner_name or "")
+    if not owner:
+        raise ValueError("owner_name is required — contacts are only usable as "
+                         "first-degree ties for the person who uploaded them")
+    return owner
+
+
 def list_for_owner(db: Session, owner_name: str | None) -> list[Contact]:
-    stmt = select(Contact)
-    if owner_name:
-        stmt = stmt.where(Contact.owner_norm == norm_name(owner_name))
+    stmt = select(Contact).where(Contact.owner_norm == _require_owner(owner_name))
     return list(db.execute(stmt.order_by(Contact.canonical_name)).scalars())
 
 
@@ -161,9 +173,7 @@ def count_for_owner(db: Session, owner_name: str) -> int:
 
 
 def delete_for_owner(db: Session, owner_name: str | None) -> int:
-    stmt = delete(Contact)
-    if owner_name:
-        stmt = stmt.where(Contact.owner_norm == norm_name(owner_name))
+    stmt = delete(Contact).where(Contact.owner_norm == _require_owner(owner_name))
     result = db.execute(stmt)
     db.commit()
     return int(result.rowcount or 0)
