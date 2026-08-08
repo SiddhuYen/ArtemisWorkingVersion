@@ -31,8 +31,17 @@ VERDICTS = (
     "TARGET_MAP_ONLY",
     "NO_PATH",
     "NEED_DISAMBIGUATION",
+    "NEED_IDENTITY",
     "INVALID_REQUEST",
 )
+
+# Verdicts allowed to carry a `path`. PATH_FOUND asserts the chain; NEED_IDENTITY
+# offers it conditionally, pending one identity the operator can confirm — a
+# registry filing that names "CHRISTOPHER MILLER" is a real, dated tie, and
+# whether that is the Christopher Miller who reaches the target is a question the
+# record cannot settle and the operator answers in seconds. Refusing outright
+# throws away a whole chain over a fact nobody looked up.
+PATH_BEARING_VERDICTS = ("PATH_FOUND", "NEED_IDENTITY")
 
 TOP_LEVEL_KEYS = (
     "verdict",
@@ -48,7 +57,7 @@ TOP_LEVEL_KEYS = (
     "searches_used",
 )
 
-MAX_INTERMEDIARIES = 2
+MAX_INTERMEDIARIES = 3
 MAX_PATH_NODES = MAX_INTERMEDIARIES + 2  # start + intermediaries + target
 
 # `source_type` marking a hop attested by the starting person's own imported
@@ -260,12 +269,29 @@ def validate_and_repair(data: dict[str, Any], *, strict: bool = False) -> Valida
         r.repairs.append(f"verdict was {verdict!r}; set to {derived!r} (derived from path)")
         data["verdict"] = verdict = derived
 
-    if path is None and verdict == "PATH_FOUND":
-        r.repairs.append("verdict was 'PATH_FOUND' with a null path; set to 'NO_PATH'")
+    if path is None and verdict in PATH_BEARING_VERDICTS:
+        r.repairs.append(f"verdict was {verdict!r} with a null path; set to 'NO_PATH'")
         data["verdict"] = verdict = "NO_PATH"
-    elif path is not None and verdict != "PATH_FOUND":
+    elif path is not None and verdict not in PATH_BEARING_VERDICTS:
         r.repairs.append(f"verdict was {verdict!r} with a path present; set to 'PATH_FOUND'")
         data["verdict"] = verdict = "PATH_FOUND"
+
+    # NEED_IDENTITY is a conditional offer, so it must carry the question that
+    # would settle it. Without that it is just a PATH_FOUND with no evidence for
+    # the hop it depends on, which is the failure mode this verdict exists to
+    # avoid — do not let it degrade into an unqualified chain.
+    if verdict == "NEED_IDENTITY":
+        q = data.get("identity_question")
+        if not isinstance(q, dict) or not _is_str(q.get("question")) or not q.get("question").strip():
+            r.errors.append(
+                "verdict is 'NEED_IDENTITY' but identity_question.question is "
+                "missing — the conditional chain has no question to resolve it"
+            )
+        elif not _is_str(q.get("name")) or not q.get("name").strip():
+            r.errors.append(
+                "verdict is 'NEED_IDENTITY' but identity_question.name does not "
+                "say which person in the path is unresolved"
+            )
 
     if verdict == "TARGET_MAP_ONLY":
         # The prompt's own floor: fewer than three real names means the target
