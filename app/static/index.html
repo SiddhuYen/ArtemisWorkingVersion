@@ -879,6 +879,47 @@ body {
 .bvr-result-lbl { font-size:9px;letter-spacing:0.26em;color:var(--ink-mute);margin-bottom:12px; }
 .bvr-no-path { font-size:11px;color:var(--ink-faint);letter-spacing:0.1em;line-height:1.6; }
 
+/* `body` sets user-select:none so dragging on the canvas does not smear a text
+   selection across the UI. That is right for chrome and wrong for output: a
+   route, a refusal and its leads are findings someone needs to paste into a
+   message or a doc. Re-enable selection on the panels that carry results only,
+   so the canvas keeps its drag behaviour. */
+#bvrResult, #rtResult, .bvr-thinking-log, .bvr-no-path, .bvr-leads,
+#bvrResult *, #rtResult *, .bvr-thinking-log *, .bvr-leads * {
+  user-select: text; -webkit-user-select: text; cursor:auto;
+}
+
+/* Identity-blocked chain. Styled as a question rather than a result: the route
+   below it is provisional, and the reader must not mistake it for a confirmed
+   one. Accent border because it is an action for them, not a finding. */
+.bvr-identity { border:1px solid var(--accent);background:linear-gradient(var(--accent-wash),transparent);padding:12px 14px;margin-bottom:14px; }
+.bvr-identity-hdr { font-size:9px;letter-spacing:0.22em;color:var(--accent-bright);margin-bottom:8px; }
+.bvr-identity-q { font-size:12px;color:var(--ink);line-height:1.65;margin-bottom:8px; }
+.bvr-identity-if { font-size:10px;color:var(--ink-mute);letter-spacing:0.06em;line-height:1.6;margin-bottom:8px; }
+.bvr-identity-cl { font-size:9px;letter-spacing:0.18em;color:var(--ink-faint);margin-bottom:4px; }
+.bvr-identity-cands { list-style:none;margin:0;padding:0; }
+.bvr-identity-cands li { font-size:11px;color:var(--ink-mute);line-height:1.6;padding-left:12px;position:relative; }
+.bvr-identity-cands li::before { content:'·';position:absolute;left:2px;color:var(--accent-dim); }
+
+.bvr-copy-btn {
+  display:none;margin:0 0 10px;padding:5px 10px;background:transparent;
+  border:1px solid var(--accent-line);color:var(--ink-dim);font-family:inherit;
+  font-size:9px;letter-spacing:0.18em;cursor:pointer;transition:all .16s;
+}
+.bvr-copy-btn:hover { border-color:var(--accent);color:var(--accent-bright); }
+.bvr-copy-btn.copied { border-color:var(--accent);color:var(--accent-bright); }
+
+/* Leads attached to a refusal: the names Artemis surfaced but could not source
+   into a verified hop. Deliberately styled apart from a real route so a lead is
+   never mistaken for a confirmed chain. */
+.bvr-leads { margin:10px 0 4px;border-left:2px solid var(--accent-line);padding:2px 0 2px 10px; }
+.bvr-leads-head { font-size:9px;letter-spacing:0.2em;color:var(--ink-faint);margin-bottom:6px;text-transform:uppercase; }
+.bvr-leads ul { list-style:none;margin:0;padding:0; }
+.bvr-leads li { font-size:11px;color:var(--ink-faint);line-height:1.6;margin-bottom:7px; }
+.bvr-leads li strong { color:var(--ink); }
+.bvr-lead-loc { color:var(--ink-faint);opacity:0.85; }
+.bvr-lead-status { display:block;font-size:9px;letter-spacing:0.14em;opacity:0.7;margin-top:1px; }
+
 /* live "thinking" transcript -- every graph.*'s progress() line as it
    happens (strategy decisions, org profiling, homonym rejections, skip
    reasons), not just the coarse hop/node % bar above it. */
@@ -1862,6 +1903,7 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
     </div>
     <div class="bvr-result-lbl" id="bvrResultLbl" style="display:none">// PATH FOUND</div>
     <button class="bvr-viz-btn" id="bvrVizBtn" onclick="openPathVisualization()" style="display:none">⛶ VISUALIZE PATHS TRIED</button>
+    <button class="bvr-copy-btn" id="bvrCopyBtn" onclick="copyResultText()">⧉ COPY RESULT</button>
     <div id="bvrResult"></div>
   </div>
 </div>

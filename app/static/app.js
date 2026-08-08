@@ -2579,12 +2579,50 @@ async function cancelBoardRoute(silent = false) {
   }
 }
 
+// Copy the rendered route/refusal as plain text. innerText rather than
+// textContent so the line structure the reader sees is the structure they
+// paste — textContent would run every block together.
+async function copyResultText() {
+  const el  = document.getElementById('bvrResult');
+  const btn = document.getElementById('bvrCopyBtn');
+  if (!el) return;
+  const parts = [];
+  const lbl = document.getElementById('bvrResultLbl');
+  if (lbl && lbl.style.display !== 'none' && lbl.textContent) parts.push(lbl.textContent.trim());
+  parts.push((el.innerText || '').trim());
+  const text = parts.filter(Boolean).join('\n\n');
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // Clipboard API needs a secure context; http://<lan-ip> is not one, so fall
+    // back to a selection the reader can copy with the keyboard rather than
+    // failing silently.
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+  if (btn) {
+    const prev = btn.textContent;
+    btn.textContent = '✓ COPIED'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = prev; btn.classList.remove('copied'); }, 1400);
+  }
+}
+
+function _showCopyBtn(show) {
+  const btn = document.getElementById('bvrCopyBtn');
+  if (btn) btn.style.display = show ? 'block' : 'none';
+}
+
 async function execBoardRoute() {
   const runSeq = ++_bvrRunSeq;
   const { start, target } = _routeEndpoints();
   const resultEl = document.getElementById('bvrResult');
   const lbl      = document.getElementById('bvrResultLbl');
   if (!resultEl) return;
+  _showCopyBtn(false);
   if (!start || !target) {
     lbl.style.display='block'; lbl.textContent='// NO ENDPOINTS SET';
     resultEl.innerHTML = `<div class="bvr-no-path">Tag a node 📍 in its detail card to set a starting person and target for this page first.</div>`;
@@ -2669,8 +2707,48 @@ async function execBoardRoute() {
     }, 700, () => _bvrCancelRequested || runSeq !== _bvrRunSeq);
     if (runSeq !== _bvrRunSeq) return;
     if (!data.connected) {
+      // An identity-blocked chain: show the route, then the one question that
+      // decides whether it is real. The operator can answer it from memory; no
+      // amount of further searching can.
+      if (data.needs_identity && data.identity_question) {
+        const q = data.identity_question;
+        lbl.textContent = '// ONE QUESTION FROM A ROUTE';
+        const steps = (data.provisional_path || []).map((n, idx, arr) => ({
+          name: n.label, role: n.relationship_from_previous || '',
+          company: (n.via_orgs || []).join(' · '),
+          kind: idx === 0 ? 'you' : (idx === arr.length - 1 ? 'target' : 'node'),
+          evidence: n.evidence || '', confidence: n.confidence, sourceUrl: n.source_url || '',
+        }));
+        const cands = (q.candidates || []).map(c => `<li>${esc(c)}</li>`).join('');
+        resultEl.innerHTML = `
+          <div class="bvr-identity">
+            <div class="bvr-identity-hdr">CONFIRM THIS AND THE ROUTE STANDS</div>
+            <div class="bvr-identity-q">${esc(q.question || '')}</div>
+            ${q.if_same ? `<div class="bvr-identity-if">If yes — ${esc(q.if_same)}</div>` : ''}
+            ${cands ? `<div class="bvr-identity-cl">Could be:</div><ul class="bvr-identity-cands">${cands}</ul>` : ''}
+          </div>
+          <div class="bvr-flbl">PROVISIONAL ROUTE — VALID ONLY IF THE ABOVE IS YES</div>
+          ${renderRoutePath(steps)}`;
+        _showCopyBtn(true);
+        return;
+      }
       lbl.textContent = '// NO ROUTE';
-      resultEl.innerHTML = `<div class="bvr-no-path">No public path found between "${esc(start.name)}" and "${esc(target.name)}" — ${esc(data.reason||'')}.</div>`;
+      // A refusal used to render as one sentence while the names Artemis had
+      // already worked out went unshown. Whoever is reading this is usually the
+      // only person who can say whether one of these would take the call, so the
+      // leads ship with the refusal rather than being dropped.
+      const leads = Array.isArray(data.leads) ? data.leads : [];
+      const leadsHtml = leads.length ? `
+        <div class="bvr-leads">
+          <div class="bvr-leads-head">Named people worth checking — not verified hops:</div>
+          <ul>${leads.map(l => `<li><strong>${esc(l.name||'')}</strong>${
+            l.locator ? ` <span class="bvr-lead-loc">(${esc(l.locator)})</span>` : ''
+          }${l.why ? ` — ${esc(l.why)}` : ''}${
+            l.status ? `<span class="bvr-lead-status">${esc(l.status)}</span>` : ''
+          }</li>`).join('')}</ul>
+        </div>` : '';
+      resultEl.innerHTML = `<div class="bvr-no-path">No public path found between "${esc(start.name)}" and "${esc(target.name)}" — ${esc(data.reason||'')}.</div>${leadsHtml}`;
+      _showCopyBtn(true);   // a refusal plus its leads is worth pasting too
       // "explored" is only present when a fresh two-sided expansion actually
       // ran (see connect._build_explored) -- absent when the cheap known-
       // route/direct-pair checks already decided nothing further needed to
@@ -2698,6 +2776,7 @@ async function execBoardRoute() {
     _bvrLastStartName = start.name;
     _bvrLastTargetName = target.name;
     if (vizBtn) vizBtn.style.display = 'block';
+    _showCopyBtn(true);
     mergeConnectResultIntoBoard(data);
   } catch(e) {
     if (runSeq !== _bvrRunSeq) return;
