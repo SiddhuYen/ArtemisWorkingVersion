@@ -183,7 +183,9 @@ def find_neighbors(
     client: Anthropic | None = None,
 ) -> NeighborResult:
     cfg = config or PathfinderConfig()
-    client = client or Anthropic()
+    # Same long-request timeout as find_path — a search turn is one call that
+    # runs for minutes, and the SDK default kills it mid-flight.
+    client = client or Anthropic(timeout=cfg.request_timeout_s)
 
     if max_searches > cfg.search_ceiling and not cfg.pin_max_uses_to_request:
         raise ValueError(

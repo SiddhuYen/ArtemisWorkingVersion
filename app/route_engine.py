@@ -26,13 +26,16 @@ confidence / source_url — so app.js renders and merges results exactly as befo
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from warm_intro import PathfinderConfig, RefusalError, find_path
 from warm_intro.client import PathfinderError
 from warm_intro.neighbors import find_neighbors
 
-from . import contacts
+from . import contacts, registry
+
+log = logging.getLogger(__name__)
 
 # One budget, no dial. The depth selector is gone: it asked the operator to
 # guess how hard a search would be before it started, which is not knowable up
@@ -141,6 +144,7 @@ def _to_ui_path(data: dict[str, Any]) -> list[dict[str, Any]]:
 _VERDICT_PREFIX = {
     "NEED_DISAMBIGUATION": "need a qualifier",
     "TARGET_MAP_ONLY": "mapped the target, but no route in",
+    "NEED_IDENTITY": "a route exists if one identity is confirmed",
     "INVALID_REQUEST": "invalid request",
 }
 
@@ -160,6 +164,59 @@ def _reason(data: dict[str, Any]) -> str:
 
     prefix = _VERDICT_PREFIX.get(str(data.get("verdict")))
     return f"{prefix} — {detail}" if prefix else detail
+
+
+def _leads(data: dict[str, Any]) -> list[dict[str, str]]:
+    """The named people behind a refusal.
+
+    A refusal used to reach the operator as one sentence, while the names the
+    model had already worked out — who it considered and dropped, who is closest
+    to the target — stayed in the payload and were never displayed. That is the
+    expensive half of the answer being thrown away: "no path" is not actionable,
+    but "no path, and the two people to ask about are X and Y" is, and the
+    operator is usually the only person who can say whether X would take the
+    call. Each lead carries why it is not already a hop, so nobody mistakes a
+    lead for a verified chain.
+    """
+    leads: list[dict[str, str]] = []
+
+    for entry in (data.get("approach_surface") or []):
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        leads.append({
+            "name": name,
+            "locator": str(entry.get("locator") or "").strip(),
+            "why": str(entry.get("tie") or "").strip(),
+            "status": "close to the target — ask whether you can reach them",
+        })
+
+    for entry in (data.get("clusters_considered") or []):
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("cluster") or "").strip()
+        if not name:
+            continue
+        leads.append({
+            "name": name,
+            "locator": "",
+            "why": str(entry.get("why_dropped") or "").strip(),
+            "status": "considered and dropped — confirm or rule out",
+        })
+
+    # Same person can be both closest-to-target and dropped; keep the first,
+    # which carries the locator.
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    for lead in leads:
+        key = lead["name"].casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(lead)
+    return out
 
 
 def _is_operator(person: str, operator_name: str) -> bool:
@@ -197,6 +254,16 @@ def run_route(
     cfg = PathfinderConfig(
         search_ceiling=SEARCH_CEILING,
         progress_sink=on_progress,
+        # Routing lives or dies on records that a search snippet cannot show:
+        # a state corporate filing listing two people as co-organizers, a
+        # campaign-finance report, a facility's own post naming who visited.
+        # Search finds those pages; only a fetch reads them. Without this the
+        # model judges a source by its snippet and correctly concludes it cannot
+        # name the tie — which reads as "no relationship exists" when what
+        # happened is that nobody opened the page. Fetches are capped by the same
+        # max_uses as searches but are not counted against `max_searches`, so
+        # this raises per-run cost.
+        enable_web_fetch=True,
     )
 
     # The shortlist is chosen here, not by the model. Ranking a few thousand
@@ -223,6 +290,27 @@ def run_route(
     }
     if shortlist:
         payload["starting_person_connections"] = shortlist
+
+    # Records silo: co-officers from state business filings, looked up here
+    # rather than left to the model. The filing that names two people together
+    # is often the only hard tie a regional figure has, and it is invisible to
+    # search — it sits behind a query form under a numeric id, so a model
+    # searching honestly finds the organisation's homepage and concludes nobody
+    # is tied to them. Two GETs settle it. Best-effort: a registry that is down
+    # costs nothing, and a state with no entry yields nothing.
+    for key, person, context in (("starting_person_co_officers", person_a, context_a),
+                                 ("target_co_officers", person_b, context_b)):
+        try:
+            found = registry.co_officers(person, context or "")
+        except Exception as exc:               # never fail a build over enrichment
+            log.warning("registry lookup failed for %r: %s", person, exc)
+            found = []
+        if found:
+            payload[key] = found
+            if on_progress:
+                names = ", ".join(f["name"].title() for f in found[:4])
+                on_progress(f"state business filings name {len(found)} co-officer(s) "
+                            f"with {person}: {names}")
 
     try:
         result = find_path(payload, config=cfg)
@@ -259,10 +347,30 @@ def run_route(
         "validation": result.validation,
     }
 
+    # An identity-blocked chain is neither a route nor a refusal: the chain is
+    # real and shown in full, but one person in it is unresolved and the operator
+    # settles it in one question. Deliberately NOT `connected: True` — it must
+    # not merge into the board as a confirmed edge on the strength of an identity
+    # nobody has confirmed yet.
+    if data.get("verdict") == "NEED_IDENTITY" and data.get("path"):
+        return {
+            "connected": False,
+            "needs_identity": True,
+            "reason": _reason(data),
+            "identity_question": data.get("identity_question") or {},
+            "provisional_path": _to_ui_path(data),
+            "leads": _leads(data),
+            "paths": [],
+            "warm_intro": diagnostics,
+        }
+
     if not data.get("path"):
         return {
             "connected": False,
             "reason": _reason(data),
+            # The named people behind the refusal, so "no path" arrives with the
+            # leads attached rather than as a dead end. See `_leads`.
+            "leads": _leads(data),
             "paths": [],
             "warm_intro": diagnostics,
         }

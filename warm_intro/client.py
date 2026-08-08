@@ -388,7 +388,10 @@ def find_path(
     cfg = config or PathfinderConfig()
     # A bare Anthropic() resolves ANTHROPIC_API_KEY, then ANTHROPIC_AUTH_TOKEN,
     # then an `ant auth login` profile — do not require a key to be exported.
-    client = client or Anthropic()
+    # The timeout is set here rather than left at the SDK default: a research
+    # turn with web_fetch enabled runs for many minutes inside ONE request, and
+    # the default read timeout kills it mid-build with nothing to show.
+    client = client or Anthropic(timeout=cfg.request_timeout_s)
 
     payload = dict(payload)
     payload.setdefault("max_searches", cfg.search_ceiling)

@@ -57,6 +57,13 @@ class PathfinderConfig:
     # contacts) before the run gives up. Each round is one extra API request.
     max_tool_rounds: int = 8
     enable_fallbacks: bool = True
+    # HTTP timeout for one API call, in seconds. The default is generous
+    # because a research turn is one long request: the model searches, and with
+    # `enable_web_fetch` it also pulls whole pages inline, so minutes can pass
+    # between stream events with nothing wrong. Streaming alone does not save
+    # you — the read timeout applies to the gap between chunks, and a build that
+    # trips it dies at whatever percent it had reached with no partial result.
+    request_timeout_s: float = 1800.0
 
     # --- caching -------------------------------------------------------------
     # None -> 5 minute TTL. "1h" costs 2x on write but survives gaps between
