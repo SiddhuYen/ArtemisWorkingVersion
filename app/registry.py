@@ -424,7 +424,61 @@ _ORG_STOPWORDS = {
     "director", "board", "member", "founder", "executive", "state", "county",
     "city", "north", "south", "east", "west", "the", "and", "of", "at", "in",
 }
-_ORG_RUN = re.compile(r"\b([A-Z][A-Za-z&.'-]*(?:\s+[A-Z][A-Za-z&.'-]*){1,6})")
+
+# --- organisation-name extraction -------------------------------------------
+# The previous implementation matched runs of Capitalised Words. Measured
+# against 20 real subjects it recovered the company 1 time in 10, and every
+# miss in the hit-rate run traced back to here rather than to a parser or a
+# missing record. Four things broke it, all common in small-business legal
+# names:
+#
+#   "ALLIED & BEHAVIORAL HEALTHCARE"   -> "&" ended the run   -> lost "Allied"
+#   "COASTAL + CAPTURED LLC"           -> "+" ended the run   -> lost "Coastal"
+#   'CAPITAL "C" LAND SERVICES'        -> quotes ended it     -> lost "Capital"
+#   "Community 2000 Education Fdn"     -> digits ended it     -> lost "Community"
+#
+# plus a two-word minimum that dropped single-token names outright, and no
+# suppression of the state name, which was searched as if it were a company
+# for 20 of 20 subjects — roughly half of all registry traffic.
+#
+# So: tokenise, grow maximal spans through the connectors that really do occur
+# inside legal names, then strip the role prefix an operator naturally writes
+# ("Director of ...") and discard spans that are locations or job titles.
+_ORG_TOKEN = re.compile(r"""
+    "[^"]{1,24}"                    |   # quoted fragment:  Capital "C"
+    [A-Za-z][A-Za-z0-9.'’-]*   |   # word, keeping the dot in "Inc."
+    \d[\d-]*                        |   # number:  1984, 2000
+    [&+]                            |   # ampersand / plus
+    ,                                   # comma, kept only before a suffix
+""", re.X)
+
+# Tokens that may sit INSIDE a name without ending it.
+_ORG_CONNECTORS = {"&", "+", "and", "of", "the", "for", "de", "la", "van", "von"}
+
+# Legal suffixes, so ", Inc." stays attached to the name it belongs to.
+_LEGAL_SUFFIX = {
+    "inc", "inc.", "llc", "l.l.c.", "ltd", "ltd.", "corp", "corp.", "co", "co.",
+    "company", "incorporated", "corporation", "limited", "partnership", "pllc",
+    "pc", "p.c.", "llp", "lp", "plc", "foundation", "association", "trust",
+}
+
+# Job titles an operator writes before the employer. Stripped only when the run
+# is followed by a preposition, so "General Motors" survives while "General
+# Partner of ..." does not.
+_ROLE_WORDS = {
+    "president", "vice", "vp", "ceo", "cfo", "coo", "cto", "chairman",
+    "chairwoman", "chair", "director", "manager", "managing", "member",
+    "organizer", "incorporator", "secretary", "treasurer", "partner", "general",
+    "owner", "founder", "cofounder", "co-founder", "principal", "officer",
+    "agent", "head", "lead", "executive", "administrator", "trustee",
+    "assistant", "asst", "senior", "sr", "jr", "acting", "interim",
+}
+_PREPOSITIONS = {"of", "at", "for", "with", "from"}
+
+
+def _is_head(tok: str) -> bool:
+    """A token that can start or continue a name in its own right."""
+    return bool(tok) and (tok[0].isupper() or tok[0].isdigit() or tok[0] == '"')
 
 
 def state_from_text(text: str) -> str | None:
@@ -440,23 +494,92 @@ def state_from_text(text: str) -> str | None:
     return None
 
 
+def _render(tokens: list[str]) -> str:
+    """Token list back to a name, without a space before a comma."""
+    out = ""
+    for t in tokens:
+        out += t if t == "," or not out else " " + t
+    # keep a trailing "." so "Inc." survives; strip only separators
+    return out.lstrip(" .,;").rstrip(" ,;")
+
+
+def _is_state_name(phrase: str) -> bool:
+    low = phrase.strip().lower()
+    return low in _STATE_NAMES or phrase.strip().upper() in set(_STATE_NAMES.values())
+
+
 def org_candidates(text: str, limit: int = _MAX_ORGS_PER_ENDPOINT) -> list[str]:
     """Organisation-looking phrases from an endpoint's context string.
 
     Deliberately loose: a wrong guess costs one cheap request that returns no
-    matches, while a missed organisation costs the hop. Runs that are entirely
-    generic words are dropped, and a parenthesised acronym like "(HAWC)" is not
-    searched on its own — registries index full legal names.
+    matches, while a missed organisation costs the hop. But "loose" has to mean
+    loose about WHICH company, not loose about where the name starts — the old
+    version routinely returned the tail of a name ("Behavioral Healthcare Inc"
+    out of "Allied & Behavioral Healthcare Inc"), which finds a different real
+    company or nothing at all.
+
+    Spans grow through the connectors that genuinely appear inside legal names
+    (&, +, digits, quoted letters, "of", and a comma before a legal suffix),
+    then a leading job title is stripped, and locations and bare titles are
+    discarded so the state name is never searched as if it were a company.
     """
     if not text:
         return []
+
+    toks = _ORG_TOKEN.findall(text)
+    n = len(toks)
+
+    # --- grow maximal spans --------------------------------------------------
+    spans: list[tuple[list[str], int, int]] = []          # (tokens, start, end)
+    i = 0
+    while i < n:
+        if not _is_head(toks[i]):
+            i += 1
+            continue
+        span, j = [toks[i]], i + 1
+        while j < n:
+            t, low = toks[j], toks[j].lower()
+            if _is_head(t):
+                span.append(t)
+            elif low in _ORG_CONNECTORS and j + 1 < n and _is_head(toks[j + 1]):
+                span.append(t)
+            elif t == "," and j + 1 < n and toks[j + 1].lower() in _LEGAL_SUFFIX:
+                span.append(t)
+            else:
+                break
+            j += 1
+        spans.append((span, i, j))
+        i = j
+
+    # --- strip job titles, then judge ---------------------------------------
     seen: set[str] = set()
     out: list[str] = []
-    for run in _ORG_RUN.findall(text):
-        phrase = run.strip(" .,;")
-        words = [w for w in phrase.split() if w.lower() not in _ORG_STOPWORDS]
-        if len(phrase.split()) < 2 or not words:
+    for idx, (span, _start, end) in enumerate(spans):
+        body, from_prep = span, False
+        # "Director of X", "General Partner of X" -> X. Only when the leading
+        # role run is followed by a preposition, so "General Motors" survives.
+        k = 0
+        while k < len(body) and body[k].lower() in _ROLE_WORDS:
+            k += 1
+        if 0 < k < len(body) and body[k].lower() in _PREPOSITIONS:
+            body, from_prep = body[k + 1:], True
+
+        phrase = _render(body)
+        if not phrase or _is_state_name(phrase):
             continue
+        # A city: this span is followed by ", <state>" in the source text.
+        if (end < n and toks[end] == "," and idx + 1 < len(spans)
+                and _is_state_name(_render(spans[idx + 1][0]))):
+            continue
+        words = [w for w in phrase.split() if w.lower() not in _ORG_STOPWORDS]
+        if not words or all(w.lower() in _ROLE_WORDS for w in phrase.split()):
+            continue
+        # A single token is only a company when it was the object of a
+        # preposition ("Treasurer of Northern"); otherwise it is a stray
+        # capitalised word and searching it wastes a request.
+        if len(phrase.split()) < 2 and not from_prep:
+            continue
+
         key = phrase.lower()
         if key in seen:
             continue
