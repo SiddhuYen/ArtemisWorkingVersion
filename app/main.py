@@ -2,9 +2,14 @@
 
 There is exactly one piece of intelligence in this application: `route_engine`,
 which asks Claude (with its own web search tool) to find a warm-introduction
-route and then independently re-fetches every source it cites. No search-API
-providers, no spaCy, no local relationship graph, no extraction pipeline — the
-22k-line engine that used to live here has been deleted, not disabled.
+route. No search-API providers, no spaCy, no local relationship graph, no
+extraction pipeline — the 22k-line engine that used to live here has been
+deleted, not disabled.
+
+Nothing re-fetches the pages Claude cites. The source verifier was removed in
+1432e7e; `source_url` is shape-checked as an http(s) string and never opened.
+A route is unverified by construction — see README "Notes for whoever works on
+this next".
 
 Everything else is scaffolding for that one call:
 
@@ -47,8 +52,10 @@ from .models import Board, BoardPage
 app = FastAPI(
     title="Artemis V6 — warm-introduction routing",
     version="0.1.0",
-    description="Finds sourced warm-introduction routes with Claude + web search, "
-                "then verifies every cited source before returning a path.",
+    description="Finds warm-introduction routes with Claude + web search. Each hop "
+                "cites a source_url that the model says supports it; nothing in "
+                "this service opens that URL, so a route is unverified by "
+                "construction and the citation is a lead, not a checked fact.",
 )
 
 
