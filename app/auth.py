@@ -22,6 +22,7 @@ import hashlib
 import hmac
 import threading
 import time
+from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 from . import config
@@ -32,22 +33,39 @@ _SESSION_SALT = b"artemis-session-v1"
 # ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Operator:
+    """A resolved identity. Never built from request-supplied data.
+
+    `id` is what every owner-scoped query filters on. `name` is a display
+    label, and is also what decides whether a /connect route starting from
+    this person may use their own imported contacts — it comes from
+    configuration, not from the request, which is the whole point.
+    """
+    id: str
+    name: str
+
+
 def enabled() -> bool:
-    """True when a token is configured and the gate is live."""
-    return bool(config.ACCESS_TOKEN)
+    """True when at least one operator token is configured and the gate is live."""
+    return bool(config.OPERATORS)
 
 
-def session_value() -> str:
-    """The cookie value a logged-in browser carries.
+def session_value(token: str) -> str:
+    """The cookie value a logged-in browser carries, for one operator's token.
 
     Deliberately NOT the token: a cookie is stored on disk by the browser and
     is easy to leak through a screenshot, a shared profile, or an extension.
     This is an HMAC of a fixed salt under the token, so it authenticates the
     same secret without ever putting the secret itself where it can be copied
     back out and used against the API.
+
+    Because each operator has a distinct token, this is distinct per operator
+    and therefore carries identity. Previously it took no argument and every
+    logged-in user got the same value, which is why identity had to come from
+    a caller-supplied string.
     """
-    return hmac.new(config.ACCESS_TOKEN.encode("utf-8"),
-                    _SESSION_SALT, hashlib.sha256).hexdigest()
+    return hmac.new(token.encode("utf-8"), _SESSION_SALT, hashlib.sha256).hexdigest()
 
 
 def _bearer(header: Optional[str]) -> str:
@@ -59,25 +77,57 @@ def _bearer(header: Optional[str]) -> str:
     return parts[1].strip()
 
 
-def token_ok(candidate: str) -> bool:
-    """Constant-time token comparison. Never use ==: a timing side channel on a
-    shared secret is exactly the kind of thing a public URL invites."""
+def operator_for_token(candidate: str) -> Optional[Operator]:
+    """The operator whose token this is, or None.
+
+    Compares against every configured token in constant time and without early
+    exit, so neither the match nor its position leaks through timing. A timing
+    side channel on a shared secret is exactly what a public URL invites.
+    """
     if not candidate or not enabled():
-        return False
-    return hmac.compare_digest(candidate, config.ACCESS_TOKEN)
+        return None
+    found: Optional[Operator] = None
+    for oid, name, token in config.OPERATORS:
+        if hmac.compare_digest(candidate, token) and found is None:
+            found = Operator(id=oid, name=name)
+    return found
+
+
+def operator_for_cookie(cookie: str) -> Optional[Operator]:
+    """The operator this session cookie belongs to, or None."""
+    if not cookie or not enabled():
+        return None
+    found: Optional[Operator] = None
+    for oid, name, token in config.OPERATORS:
+        if hmac.compare_digest(cookie, session_value(token)) and found is None:
+            found = Operator(id=oid, name=name)
+    return found
+
+
+def resolve_operator(headers, cookies) -> Optional[Operator]:
+    """The authenticated identity for this request, or None.
+
+    This is the ONLY source of owner identity in the application. Nothing in
+    the request body, query string, or a non-auth header may contribute.
+    """
+    if not enabled():
+        # Open mode (local checkout, no token configured). Identity is a fixed
+        # constant rather than absent, so owner-scoped queries still filter on
+        # something the caller cannot choose.
+        return Operator(id=config.ANONYMOUS_OPERATOR_ID,
+                        name=config.ANONYMOUS_OPERATOR_ID)
+    op = operator_for_token(_bearer(headers.get("authorization")))
+    if op is None:
+        # Some clients find a bare header easier than an Authorization one.
+        op = operator_for_token((headers.get("x-artemis-token") or "").strip())
+    if op is None:
+        op = operator_for_cookie(cookies.get(config.SESSION_COOKIE) or "")
+    return op
 
 
 def request_authenticated(headers, cookies) -> bool:
-    """True when this request carries the token or a valid session cookie."""
-    if not enabled():
-        return True
-    if token_ok(_bearer(headers.get("authorization"))):
-        return True
-    # Some clients find a bare header easier than an Authorization one.
-    if token_ok((headers.get("x-artemis-token") or "").strip()):
-        return True
-    cookie = cookies.get(config.SESSION_COOKIE)
-    return bool(cookie) and hmac.compare_digest(cookie, session_value())
+    """True when this request carries a recognised token or session cookie."""
+    return resolve_operator(headers, cookies) is not None
 
 
 def client_key(client_host: str, headers) -> str:

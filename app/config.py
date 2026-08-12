@@ -87,6 +87,56 @@ DB_MAX_OVERFLOW = int(os.environ.get("ARTEMIS_DB_MAX_OVERFLOW", "10"))
 
 # --- auth -------------------------------------------------------------------
 ACCESS_TOKEN = os.environ.get("ARTEMIS_ACCESS_TOKEN", "").strip()
+
+
+def _parse_operators(raw: str) -> list[tuple[str, str, str]]:
+    """`ARTEMIS_OPERATORS` -> [(operator_id, display_name, token), ...].
+
+    Format is comma-separated entries, each either
+
+        id:token                 display name defaults to the id
+        id:Display Name:token
+
+    Tokens are url-safe base64 (`secrets.token_urlsafe`) and never contain a
+    colon, so the split is unambiguous.
+
+    This exists because the app previously had no per-user identity at all:
+    one shared token produced one identical session cookie for everybody, so
+    nothing in a request could say WHO was asking, and owner scoping fell back
+    to a caller-supplied string. One token per operator is the smallest change
+    that makes identity server-resolved — no user table, no password store.
+    """
+    out: list[tuple[str, str, str]] = []
+    for entry in (raw or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parts = [p.strip() for p in entry.split(":")]
+        if len(parts) == 2:
+            oid, token = parts
+            name = oid
+        elif len(parts) >= 3:
+            oid, name, token = parts[0], ":".join(parts[1:-1]), parts[-1]
+        else:
+            continue
+        if oid and token:
+            out.append((oid, name or oid, token))
+    return out
+
+
+OPERATORS: list[tuple[str, str, str]] = _parse_operators(
+    os.environ.get("ARTEMIS_OPERATORS", ""))
+
+# Backwards compatibility: a deploy that only sets ARTEMIS_ACCESS_TOKEN keeps
+# working as a single operator. It is still not caller-expressible — the id is
+# resolved server-side either way.
+if not OPERATORS and ACCESS_TOKEN:
+    OPERATORS = [("default", "default", ACCESS_TOKEN)]
+
+# The identity used when the gate is off entirely (a local checkout with no
+# token configured). A constant, so even in open mode a caller cannot choose
+# whose rows they read.
+ANONYMOUS_OPERATOR_ID = "default"
 # Browser session cookie set by POST /login. Holds a value DERIVED from the
 # token, never the token itself (see auth.session_value).
 SESSION_COOKIE = os.environ.get("ARTEMIS_SESSION_COOKIE", "artemis_session")

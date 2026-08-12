@@ -2,9 +2,14 @@
 
 There is exactly one piece of intelligence in this application: `route_engine`,
 which asks Claude (with its own web search tool) to find a warm-introduction
-route and then independently re-fetches every source it cites. No search-API
-providers, no spaCy, no local relationship graph, no extraction pipeline — the
-22k-line engine that used to live here has been deleted, not disabled.
+route. No search-API providers, no spaCy, no local relationship graph, no
+extraction pipeline — the 22k-line engine that used to live here has been
+deleted, not disabled.
+
+Nothing re-fetches the pages Claude cites. The source verifier was removed in
+1432e7e; `source_url` is shape-checked as an http(s) string and never opened.
+A route is unverified by construction — see README "Notes for whoever works on
+this next".
 
 Everything else is scaffolding for that one call:
 
@@ -32,7 +37,7 @@ import uuid
 from collections import defaultdict
 
 from fastapi import (
-    Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile,
+    Depends, FastAPI, File, HTTPException, Request, UploadFile,
 )
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,14 +46,16 @@ from sqlalchemy.orm import Session
 
 from . import auth, config, contacts
 from .buildqueue import BUILDS, QueueFull
-from .db import get_boards_db, init_boards_db, safe_graph_id
+from .db import get_boards_db, init_boards_db
 from .models import Board, BoardPage
 
 app = FastAPI(
     title="Artemis V6 — warm-introduction routing",
     version="0.1.0",
-    description="Finds sourced warm-introduction routes with Claude + web search, "
-                "then verifies every cited source before returning a path.",
+    description="Finds warm-introduction routes with Claude + web search. Each hop "
+                "cites a source_url that the model says supports it; nothing in "
+                "this service opens that URL, so a route is unverified by "
+                "construction and the citation is a lead, not a checked fact.",
 )
 
 
@@ -76,9 +83,16 @@ def _wants_html(request: Request) -> bool:
 
 @app.middleware("http")
 async def _require_token(request: Request, call_next):
-    if not auth.enabled() or request.url.path in _PUBLIC_PATHS:
+    # Resolve identity once, here, and attach it. This is the ONLY place an
+    # operator identity enters the application: every owner-scoped query
+    # downstream filters on request.state.operator via require_operator(),
+    # never on anything the caller sent.
+    operator = auth.resolve_operator(request.headers, request.cookies)
+    request.state.operator = operator
+
+    if request.url.path in _PUBLIC_PATHS:
         return await call_next(request)
-    if auth.request_authenticated(request.headers, request.cookies):
+    if operator is not None:
         return await call_next(request)
     # A browser navigating to a page gets sent to the login form; an API client
     # gets a machine-readable 401 it can act on rather than an HTML redirect it
@@ -166,11 +180,15 @@ def login(req: dict, request: Request) -> JSONResponse:
         raise HTTPException(status_code=429,
                             detail=f"too many attempts — retry in {int(retry_after)}s",
                             headers={"Retry-After": str(int(retry_after))})
-    if not auth.token_ok(_str_field(req, "token")):
+    token = _str_field(req, "token")
+    operator = auth.operator_for_token(token)
+    if operator is None:
         raise HTTPException(status_code=401, detail="invalid token")
-    resp = JSONResponse({"ok": True})
+    # The cookie is an HMAC under THIS operator's token, so it identifies them
+    # on every later request. The token itself never goes into the cookie.
+    resp = JSONResponse({"ok": True, "operator": operator.id})
     resp.set_cookie(
-        config.SESSION_COOKIE, auth.session_value(),
+        config.SESSION_COOKIE, auth.session_value(token),
         max_age=config.SESSION_MAX_AGE_S,
         httponly=True,          # unreadable from JS, so an XSS can't lift it
         samesite="lax",
@@ -365,12 +383,20 @@ def _str_field(req: dict, key: str) -> str:
     return val.strip()
 
 
-def _owner_id(x_graph_id: str = Header(default="default", alias="X-Graph-Id")) -> str:
-    """The per-browser id the frontend mints into localStorage. Scopes both the
-    operator's own profile (/owner) and Boards; the discovery graph itself is
-    shared. Defined up here because endpoints in several sections below take it
-    as a dependency, and Depends() resolves at decoration time."""
-    return safe_graph_id(x_graph_id)
+def require_operator(request: Request) -> auth.Operator:
+    """The authenticated identity, resolved by the middleware.
+
+    Every owner-scoped endpoint depends on this and on nothing else. It
+    replaces two caller-supplied values that used to decide whose rows were
+    read: an `owner_name` query/body string (typed into a browser prompt) and
+    an `X-Graph-Id` header (a UUID the frontend minted into localStorage).
+    Neither was authenticated, so any holder of the shared token could read or
+    delete another operator's contacts by changing the string.
+    """
+    op = getattr(request.state, "operator", None)
+    if op is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    return op
 
 
 @app.get("/jobs/{job_id}")
@@ -496,16 +522,20 @@ def _wrapper_job(job_id: str, ticket, fn, *args, **kwargs) -> None:
 
 def _run_connect_job(job_id: str, ticket, a: str, b: str,
                      context_a: str, context_b: str, ask: str,
-                     owner_name: str) -> None:
+                     operator_id: str, operator_name: str) -> None:
     """Route search. Opens its own DB session: this runs on a worker thread,
-    long after the request-scoped session from Depends() has been closed."""
+    long after the request-scoped session from Depends() has been closed.
+
+    `operator_id` and `operator_name` are carried from the resolved identity at
+    request time — the worker thread has no request to re-derive them from, and
+    they must not be re-read from anything the caller sent."""
     from .route_engine import run_route
     from .db import BoardsSessionLocal
 
     db = BoardsSessionLocal()
     try:
         _wrapper_job(job_id, ticket, run_route, a, b, ask, context_a, context_b,
-                     db=db, operator_name=owner_name)
+                     db=db, operator_id=operator_id, operator_name=operator_name)
     finally:
         db.close()
 
@@ -516,7 +546,8 @@ def _run_discover_job(job_id: str, ticket, name: str) -> None:
 
 
 @app.post("/connect")
-def connect(req: dict, request: Request) -> dict:
+def connect(req: dict, request: Request,
+            op: auth.Operator = Depends(require_operator)) -> dict:
     """Kick off a route search between two people; poll GET /jobs/{job_id}.
 
     Body: {"person_a", "person_b", "ask"?, "context_a"?, "context_b"?}
@@ -526,10 +557,12 @@ def connect(req: dict, request: Request) -> dict:
     of the next — but a blank ask no longer blocks a run; it simply means the
     hops are judged without a particular request in mind.
 
-    `owner_name` says who is ASKING. It gates one thing: when it matches
-    `person_a`, that person's imported connections are offered to the model as
-    first-degree ties for the first hop. Tag anyone else as the origin and the
-    tool is not offered at all — those contacts are not their connections.
+    Who is ASKING comes from the authenticated identity, never from the body.
+    It gates one thing: when the resolved operator's configured name matches
+    `person_a`, that operator's own imported connections are offered to the
+    model as first-degree ties for the first hop. It used to be an `owner_name`
+    body field, which let any caller claim to be anyone and route through that
+    person's contacts.
 
     `depth` is accepted and ignored; there is one search budget now
     (route_engine.MAX_SEARCHES) rather than a dial."""
@@ -549,7 +582,7 @@ def connect(req: dict, request: Request) -> dict:
         )
     return _start_build_job(
         request, "connect", _run_connect_job,
-        (a, b, context_a, context_b, ask, _str_field(req, "owner_name")))
+        (a, b, context_a, context_b, ask, op.id, op.name))
 
 
 @app.post("/discover")
@@ -564,10 +597,29 @@ def discover(req: dict, request: Request) -> dict:
 
 
 def _get_owned_board(db: Session, board_id: str, owner_id: str) -> Board:
-    b = db.get(Board, board_id)
-    if b is None or b.owner_id != owner_id:
+    """Fetch a board that belongs to `owner_id`, or 404.
+
+    Ownership is in the WHERE clause, not an `if` after the fetch: a row the
+    caller does not own is never loaded, so there is no window in which it
+    exists in memory and a later edit can forget to check it.
+    """
+    b = db.execute(
+        select(Board).where(Board.id == board_id, Board.owner_id == owner_id)
+    ).scalar_one_or_none()
+    if b is None:
         raise HTTPException(status_code=404, detail="board not found")
     return b
+
+
+def _get_owned_page(db: Session, board_id: str, page_id: str) -> BoardPage:
+    """Fetch a page of an already-ownership-checked board, or 404."""
+    page = db.execute(
+        select(BoardPage).where(BoardPage.id == page_id,
+                                BoardPage.board_id == board_id)
+    ).scalar_one_or_none()
+    if page is None:
+        raise HTTPException(status_code=404, detail="page not found")
+    return page
 
 
 def _page_dict(p: BoardPage) -> dict:
@@ -593,13 +645,13 @@ def _board_summary(b: Board, seq: int, pages: list[BoardPage]) -> dict:
 
 
 @app.post("/boards")
-def create_board(req: dict, owner_id: str = Depends(_owner_id),
+def create_board(req: dict, op: auth.Operator = Depends(require_operator),
                   db: Session = Depends(get_boards_db)) -> dict:
     name = _str_field(req, "name")
     if not name:
         raise HTTPException(status_code=400, detail="name required")
     board = Board(
-        owner_id=owner_id, name=name,
+        owner_id=op.id, name=name,
         target_name=_str_field(req, "target_name") or None,
         target_org=_str_field(req, "target_org") or None,
     )
@@ -611,14 +663,14 @@ def create_board(req: dict, owner_id: str = Depends(_owner_id),
     # This board was just created, so it's necessarily the newest for this
     # owner -- a plain (indexed) owner_id count already equals its seq,
     # without the unindexed `created_at <=` string range-scan.
-    seq = db.query(Board).filter(Board.owner_id == owner_id).count()
+    seq = db.query(Board).filter(Board.owner_id == op.id).count()
     return _board_summary(board, seq, [page])
 
 
 @app.get("/boards")
-def list_boards(owner_id: str = Depends(_owner_id), db: Session = Depends(get_boards_db)) -> list:
+def list_boards(op: auth.Operator = Depends(require_operator), db: Session = Depends(get_boards_db)) -> list:
     rows = list(db.execute(
-        select(Board).where(Board.owner_id == owner_id).order_by(Board.created_at.asc())
+        select(Board).where(Board.owner_id == op.id).order_by(Board.created_at.asc())
     ).scalars())
     # One query for all boards' pages instead of one per board (N+1).
     pages_by_board: dict[str, list] = defaultdict(list)
@@ -636,9 +688,9 @@ def list_boards(owner_id: str = Depends(_owner_id), db: Session = Depends(get_bo
 
 
 @app.get("/boards/{board_id}")
-def get_board(board_id: str, owner_id: str = Depends(_owner_id),
+def get_board(board_id: str, op: auth.Operator = Depends(require_operator),
               db: Session = Depends(get_boards_db)) -> dict:
-    b = _get_owned_board(db, board_id, owner_id)
+    b = _get_owned_board(db, board_id, op.id)
     pages = _board_pages(db, board_id)
     return {"id": b.id, "name": b.name, "status": b.status or "active",
             "target_name": b.target_name, "target_org": b.target_org,
@@ -646,9 +698,9 @@ def get_board(board_id: str, owner_id: str = Depends(_owner_id),
 
 
 @app.patch("/boards/{board_id}")
-def update_board(board_id: str, req: dict, owner_id: str = Depends(_owner_id),
+def update_board(board_id: str, req: dict, op: auth.Operator = Depends(require_operator),
                   db: Session = Depends(get_boards_db)) -> dict:
-    b = _get_owned_board(db, board_id, owner_id)
+    b = _get_owned_board(db, board_id, op.id)
     if "status" in req:
         if req["status"] not in ("active", "archived"):
             raise HTTPException(status_code=400, detail="status must be 'active' or 'archived'")
@@ -663,15 +715,15 @@ def update_board(board_id: str, req: dict, owner_id: str = Depends(_owner_id),
         b.target_org = _str_field(req, "target_org") or None
     db.commit()
     seq = db.query(Board).filter(
-        Board.owner_id == owner_id, Board.created_at <= b.created_at
+        Board.owner_id == op.id, Board.created_at <= b.created_at
     ).count()
     return _board_summary(b, seq, _board_pages(db, board_id))
 
 
 @app.delete("/boards/{board_id}")
-def delete_board(board_id: str, owner_id: str = Depends(_owner_id),
+def delete_board(board_id: str, op: auth.Operator = Depends(require_operator),
                   db: Session = Depends(get_boards_db)) -> dict:
-    b = _get_owned_board(db, board_id, owner_id)
+    b = _get_owned_board(db, board_id, op.id)
     db.query(BoardPage).filter(BoardPage.board_id == b.id).delete()
     db.delete(b)
     db.commit()
@@ -680,9 +732,9 @@ def delete_board(board_id: str, owner_id: str = Depends(_owner_id),
 
 # ---- Pages ------------------------------------------------------------------
 @app.post("/boards/{board_id}/pages")
-def create_page(board_id: str, req: dict, owner_id: str = Depends(_owner_id),
+def create_page(board_id: str, req: dict, op: auth.Operator = Depends(require_operator),
                  db: Session = Depends(get_boards_db)) -> dict:
-    _get_owned_board(db, board_id, owner_id)
+    _get_owned_board(db, board_id, op.id)
     existing = _board_pages(db, board_id)
     name = _str_field(req, "name") or f"Page {len(existing) + 1}"
     page = BoardPage(board_id=board_id, name=name, position=len(existing), elements={})
@@ -692,12 +744,10 @@ def create_page(board_id: str, req: dict, owner_id: str = Depends(_owner_id),
 
 
 @app.patch("/boards/{board_id}/pages/{page_id}")
-def update_page(board_id: str, page_id: str, req: dict, owner_id: str = Depends(_owner_id),
+def update_page(board_id: str, page_id: str, req: dict, op: auth.Operator = Depends(require_operator),
                  db: Session = Depends(get_boards_db)) -> dict:
-    _get_owned_board(db, board_id, owner_id)
-    page = db.get(BoardPage, page_id)
-    if page is None or page.board_id != board_id:
-        raise HTTPException(status_code=404, detail="page not found")
+    _get_owned_board(db, board_id, op.id)
+    page = _get_owned_page(db, board_id, page_id)
     if "name" in req:
         new_name = _str_field(req, "name")
         if new_name:
@@ -709,15 +759,13 @@ def update_page(board_id: str, page_id: str, req: dict, owner_id: str = Depends(
 
 
 @app.delete("/boards/{board_id}/pages/{page_id}")
-def delete_page(board_id: str, page_id: str, owner_id: str = Depends(_owner_id),
+def delete_page(board_id: str, page_id: str, op: auth.Operator = Depends(require_operator),
                  db: Session = Depends(get_boards_db)) -> dict:
-    _get_owned_board(db, board_id, owner_id)
+    _get_owned_board(db, board_id, op.id)
     pages = _board_pages(db, board_id)
     if len(pages) <= 1:
         raise HTTPException(status_code=400, detail="a board must keep at least one page")
-    page = db.get(BoardPage, page_id)
-    if page is None or page.board_id != board_id:
-        raise HTTPException(status_code=404, detail="page not found")
+    page = _get_owned_page(db, board_id, page_id)
     db.delete(page)
     db.commit()
     return {"deleted": page_id}
@@ -749,58 +797,30 @@ def list_people() -> list:
     return []
 
 
-def _require_owner_name(owner_name: str) -> str:
-    """Reject an owner-less read or delete.
-
-    These rows are somebody's first-degree connections and carry real personal
-    data — names, employers, emails, LinkedIn URLs — for people who never used
-    this app. Defaulting the scope to "everyone" turned a missing query
-    parameter into a dump of every operator's contacts, and on the delete side
-    into a wipe of the whole table. The upload path already refuses an owner-less
-    write; read and delete now agree with it."""
-    if not owner_name.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="owner_name is required — contacts are only usable as "
-                   "first-degree ties for the person who uploaded them",
-        )
-    return owner_name
-
-
 @app.get("/network/profiles")
-def list_network_profiles(owner_name: str = "",
+def list_network_profiles(op: auth.Operator = Depends(require_operator),
                           db: Session = Depends(get_boards_db)) -> list:
-    """The operator's imported contacts.
+    """The authenticated operator's own imported contacts.
 
-    `owner_name` scopes the read and is required — see `_require_owner_name`."""
-    _require_owner_name(owner_name)
-    return [contacts.to_profile_dict(c) for c in contacts.list_for_owner(db, owner_name)]
+    Scope comes from the resolved identity. `owner_name` used to be a query
+    parameter, which meant any holder of the shared token could read another
+    operator's contacts — real names, employers, emails and LinkedIn URLs for
+    people who never used this app — by changing the string."""
+    return [contacts.to_profile_dict(c) for c in contacts.list_for_owner(db, op.id)]
 
 
 @app.delete("/network/profiles")
-def delete_network_profiles(owner_name: str = "",
+def delete_network_profiles(op: auth.Operator = Depends(require_operator),
                             db: Session = Depends(get_boards_db)) -> dict:
-    """Delete one operator's contacts. `owner_name` is required: without it this
-    deleted every row in the table rather than that person's."""
-    _require_owner_name(owner_name)
-    return {"deleted": contacts.delete_for_owner(db, owner_name)}
+    """Delete the authenticated operator's contacts, and only theirs."""
+    return {"deleted": contacts.delete_for_owner(db, op.id)}
 
 
 @app.post("/network/upload")
 async def upload_network(file: UploadFile = File(...),
-                         owner_name: str = Form(""),
+                         op: auth.Operator = Depends(require_operator),
                          db: Session = Depends(get_boards_db)) -> dict:
-    """Import a LinkedIn Connections.csv.
-
-    `owner_name` is required, and the requirement is the point: a contact list
-    with nobody attached to it cannot be used as anyone's first-degree ties, so
-    accepting one would store rows that routing must then ignore."""
-    if not owner_name.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="owner_name is required — contacts are only usable as "
-                   "first-degree ties for the person who uploaded them",
-        )
+    """Import a LinkedIn Connections.csv against the authenticated operator."""
     raw = await file.read()
     try:
         rows = contacts.parse_linkedin_csv(raw)
@@ -812,20 +832,18 @@ async def upload_network(file: UploadFile = File(...),
             detail="no connections found in that file — expected LinkedIn's "
                    "Connections.csv, which has First Name / Last Name columns",
         )
-    return {"ingested": contacts.ingest(db, owner_name, rows, source="linkedin_csv"),
+    return {"ingested": contacts.ingest(db, op.id, rows, source="linkedin_csv"),
             "parsed": len(rows)}
 
 
 @app.post("/network/contacts/import")
-def import_contacts(req: dict, db: Session = Depends(get_boards_db)) -> dict:
+def import_contacts(req: dict, op: auth.Operator = Depends(require_operator),
+                    db: Session = Depends(get_boards_db)) -> dict:
     """Import contacts as JSON rows (the vCard / phone-contacts path)."""
-    owner_name = _str_field(req, "owner_name")
-    if not owner_name:
-        raise HTTPException(status_code=400, detail="owner_name is required")
     rows = req.get("contacts")
     if not isinstance(rows, list) or not rows:
         raise HTTPException(status_code=400, detail="contacts must be a non-empty list")
-    return {"ingested": contacts.ingest(db, owner_name, rows, source="vcard")}
+    return {"ingested": contacts.ingest(db, op.id, rows, source="vcard")}
 
 
 @app.post("/network/profiles/backfill-graph-edges")
