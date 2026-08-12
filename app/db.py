@@ -4,8 +4,9 @@ Two engines:
   - default engine (``config.DB_URL``) — ONE shared global discovery graph
     Boards are the only persisted state; routes are researched live per run.
   - boards engine (``config.BOARDS_DB_URL``) — the Boards/Pages UI workspace,
-    owner-scoped by X-Graph-Id (see safe_graph_id). Its own SQLite file
-    locally; the same database as the graph on Postgres (see config).
+    owner-scoped by the authenticated operator id (see auth.resolve_operator).
+    Its own SQLite file locally; the same database as the graph on Postgres
+    (see config).
 
 Both backends are supported and the schema is identical on each — models use
 only portable column types, so ``create_all`` builds it on either. Postgres is
@@ -213,13 +214,7 @@ def get_boards_db():
         db.close()
 
 
-# Sanitizes the X-Graph-Id header into a safe filename-stem-shaped owner id
-# for scoping Boards (see main.py's _owner_id) — NOT used for the discovery
-# graph, which is one shared engine for everyone (see module docstring).
-_GRAPH_ID_RE = re.compile(r"[^a-zA-Z0-9_-]")
-
-
-def safe_graph_id(graph_id: str) -> str:
-    """Sanitize a client-supplied graph id into a safe filename stem."""
-    gid = _GRAPH_ID_RE.sub("", graph_id or "")[:64]
-    return gid or "default"
+# safe_graph_id() lived here to sanitise the client-supplied X-Graph-Id header
+# that used to scope Boards. That header was caller-controlled and is gone:
+# board ownership now comes from auth.resolve_operator(). Removed rather than
+# left dead so nothing reintroduces request-supplied scoping by reaching for it.

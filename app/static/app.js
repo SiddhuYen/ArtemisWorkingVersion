@@ -12,7 +12,7 @@ const GRAPH_ID = (() => {
   }
   return id;
 })();
-const API_HEADERS = { 'Content-Type': 'application/json', 'X-Graph-Id': GRAPH_ID };
+const API_HEADERS = { 'Content-Type': 'application/json' };
 
 // A session cookie can expire while this tab sits open, after which every
 // request 401s. Catching that centrally sends the user to the sign-in page
@@ -117,7 +117,7 @@ async function loadMyContactCount() {
   if (!hasOperatorName()) { _myContactCount = 0; return; }   // nobody to own them yet
   try {
     const mine = await (await fetch(
-      '/network/profiles?owner_name=' + encodeURIComponent(operatorName()))).json();
+      '/network/profiles')).json();
     _myContactCount = Array.isArray(mine) ? mine.length : 0;
   } catch (e) {
     console.error('Failed to count own contacts', e);
@@ -137,7 +137,7 @@ async function loadContactsFromBackend() {
   if (!hasOperatorName()) { db.contacts = []; await loadMyContactCount(); return; }
   try {
     const rows = await (await fetch(
-      '/network/profiles?owner_name=' + encodeURIComponent(operatorName()))).json();
+      '/network/profiles')).json();
     const links = _localLinks(), photos = _localPhotos();
     db.contacts = rows.map(p => ({
       id: p.id, name: p.canonical_name, role: (p.titles||[])[0]||'', company: (p.companies||[])[0]||'',
@@ -2094,7 +2094,7 @@ async function clearAllContacts() {
   if (!confirm(`Delete all ${n} of your contacts? This cannot be undone.`)) return;
   try {
     // Scoped: unscoped, this deleted every operator's contacts, not just yours.
-    await fetch('/network/profiles?owner_name=' + encodeURIComponent(operatorName()),
+    await fetch('/network/profiles',
                 { method: 'DELETE' });
     localStorage.removeItem('artemis_contact_links');
     localStorage.removeItem('artemis_contact_photos');
@@ -2667,15 +2667,12 @@ async function execBoardRoute() {
   _bvrLastExplored = null;
   try {
     const started = await (await fetch('/connect', { method:'POST', headers:API_HEADERS,
-      // owner_name says who is ASKING, which is not the same as person_a. The
-      // backend bridges your imported contacts to person_a as first-degree
-      // ties only when the two match -- tag a stranger as the origin and those
-      // contacts are simply not their connections. Sent on the same condition
-      // as the import paths above: 'OPERATOR' is the placeholder, not a name.
+      // Who is ASKING is resolved server-side from the session, not sent. The
+      // backend bridges your imported contacts to person_a as first-degree ties
+      // only when person_a matches the authenticated operator's configured
+      // name; a client can no longer nominate whose contacts to borrow.
       body: JSON.stringify({ person_a: start.name, person_b: target.name,
-                             context_a: contextA, context_b: contextB, ask,
-                             ...(hasOperatorName()
-                                 ? { owner_name: operatorName() } : {}) }) })).json();
+                             context_a: contextA, context_b: contextB, ask }) })).json();
     if (started.detail) throw new Error(started.detail);
     if (runSeq !== _bvrRunSeq) return;
     _bvrActiveJobId = started.job_id;
@@ -2978,12 +2975,8 @@ async function confirmLinkedInImport() {
   btn.disabled = true; const orig = btn.textContent; btn.textContent = 'IMPORTING…';
   try {
     const fd = new FormData(); fd.append('file', _liFile);
-    // Sending owner_name bridges each contact into the shared public graph as
-    // a real linkedin_1st edge (see POST /network/upload), so /connect and
-    // /discover can route through it. Skipped for the default placeholder
-    // name so an operator who never renamed themselves doesn't create a
-    // garbage "OPERATOR" node in the shared graph.
-    if (hasOperatorName()) fd.append('owner_name', operatorName());
+    // Ownership comes from the session; the upload is attributed to the
+    // authenticated operator server-side.
     const res = await fetch('/network/upload', { method: 'POST', body: fd });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
@@ -3247,10 +3240,6 @@ async function confirmVcfImport() {
           name: vcfFullName(c), company: c.org, title: c.title, email: c.email,
           notes: c.tel ? `Phone: ${c.tel}` : ''
         })),
-        // Same bridge the CSV path does (see confirmLinkedInImport): without
-        // owner_name these contacts land in LocalProfile only and stay
-        // invisible to /connect and /discover.
-        ...(hasOperatorName() ? { owner_name: operatorName() } : {}),
       })
     });
     if (!res.ok) throw new Error(await res.text());
@@ -3553,7 +3542,7 @@ async function backfillOwnerGraphEdgesOnce() {
   try {
     await fetch('/network/profiles/backfill-graph-edges', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ owner_name: name }),
+      body: JSON.stringify({}),
     });
     localStorage.setItem(flagKey, '1');
   } catch (e) { /* best-effort; try again next boot */ }

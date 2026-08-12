@@ -225,6 +225,10 @@ def _is_operator(person: str, operator_name: str) -> bool:
     Compared on normalised names. The contact list is only evidence about the
     person who uploaded it, so routing through it when the origin is someone
     else would assert relationships that nobody has claimed.
+
+    `operator_name` is the display name from the resolved identity's
+    configuration, never a request field. Previously it was an `owner_name`
+    body value, so a caller could name anyone here and borrow their contacts.
     """
     if not operator_name:
         return False
@@ -239,6 +243,7 @@ def run_route(
     context_b: str = "",
     on_progress: Callable[[str], None] | None = None,
     db: Any = None,
+    operator_id: str = "",
     operator_name: str = "",
 ) -> dict[str, Any]:
     """Find a verified route from person_a to person_b. Returns the UI contract.
@@ -271,11 +276,11 @@ def run_route(
     # request: no tool round trips, each of which re-sent the entire
     # conversation just to hand back a database lookup.
     shortlist: list[dict[str, Any]] = []
-    if db is not None and _is_operator(person_a, operator_name):
-        held = contacts.count_for_owner(db, operator_name)
+    if db is not None and operator_id and _is_operator(person_a, operator_name):
+        held = contacts.count_for_owner(db, operator_id)
         if held:
             shortlist = contacts.top_candidates(
-                db, operator_name, _qualify(person_b, context_b),
+                db, operator_id, _qualify(person_b, context_b),
                 limit=NETWORK_SHORTLIST)
             if on_progress:
                 on_progress(

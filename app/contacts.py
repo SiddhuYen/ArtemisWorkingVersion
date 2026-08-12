@@ -22,7 +22,7 @@ import re
 import unicodedata
 from typing import Any, Iterable
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .models import Contact
@@ -98,13 +98,15 @@ def parse_linkedin_csv(raw: bytes | str) -> list[dict[str, str]]:
     return out
 
 
-def ingest(db: Session, owner_name: str, rows: Iterable[dict[str, Any]],
+def ingest(db: Session, owner_id: str, rows: Iterable[dict[str, Any]],
            source: str = "linkedin_csv") -> dict[str, int]:
-    """Upsert rows for one owner. Returns {created, updated, skipped}."""
-    owner = norm_name(owner_name)
-    if not owner:
-        raise ValueError("owner_name is required — contacts are only usable as "
-                         "first-degree ties for the person who uploaded them")
+    """Upsert rows for one owner. Returns {created, updated, skipped}.
+
+    `owner_id` is a resolved operator identity (see auth.resolve_operator), not
+    a name off the request. It is stored verbatim so the value written matches
+    the value every read filters on.
+    """
+    owner = _require_owner(owner_id)
 
     existing = {
         c.norm_name: c
@@ -155,25 +157,39 @@ def ingest(db: Session, owner_name: str, rows: Iterable[dict[str, Any]],
 # contacts out of another's hands — an unfiltered query here is every operator's
 # imported contacts, and an unfiltered DELETE is the whole table rather than one
 # person's rows. Requiring the owner makes both impossible to express.
-def _require_owner(owner_name: str | None) -> str:
-    owner = norm_name(owner_name or "")
+def _require_owner(owner_id: str | None) -> str:
+    """The resolved operator id these rows belong to.
+
+    Never a request field. An empty value is a programming error — it would
+    mean an owner-scoped query with no owner, which is how an unfiltered read
+    of every operator's contacts happens — so it raises rather than defaulting.
+    """
+    owner = (owner_id or "").strip()
     if not owner:
-        raise ValueError("owner_name is required — contacts are only usable as "
-                         "first-degree ties for the person who uploaded them")
+        raise ValueError("owner_id is required — contacts are only readable by "
+                         "the authenticated operator who uploaded them")
     return owner
 
 
-def list_for_owner(db: Session, owner_name: str | None) -> list[Contact]:
-    stmt = select(Contact).where(Contact.owner_norm == _require_owner(owner_name))
+def list_for_owner(db: Session, owner_id: str | None) -> list[Contact]:
+    stmt = select(Contact).where(Contact.owner_norm == _require_owner(owner_id))
     return list(db.execute(stmt.order_by(Contact.canonical_name)).scalars())
 
 
-def count_for_owner(db: Session, owner_name: str) -> int:
-    return len(list_for_owner(db, owner_name))
+def count_for_owner(db: Session, owner_id: str) -> int:
+    """Row count for one owner, counted in the database.
+
+    Filtered at the query layer rather than by fetching and measuring, so the
+    scope is enforced by SQL and not by application logic after the rows are
+    already in memory.
+    """
+    stmt = select(func.count()).select_from(Contact).where(
+        Contact.owner_norm == _require_owner(owner_id))
+    return int(db.execute(stmt).scalar_one())
 
 
-def delete_for_owner(db: Session, owner_name: str | None) -> int:
-    stmt = delete(Contact).where(Contact.owner_norm == _require_owner(owner_name))
+def delete_for_owner(db: Session, owner_id: str | None) -> int:
+    stmt = delete(Contact).where(Contact.owner_norm == _require_owner(owner_id))
     result = db.execute(stmt)
     db.commit()
     return int(result.rowcount or 0)
@@ -227,7 +243,7 @@ def _seniority(title: str) -> int:
     return 0
 
 
-def top_candidates(db: Session, owner_name: str, target: str,
+def top_candidates(db: Session, owner_id: str, target: str,
                    limit: int = 10) -> list[dict[str, Any]]:
     """The connections most likely to be able to reach `target`.
 
@@ -243,7 +259,7 @@ def top_candidates(db: Session, owner_name: str, target: str,
     Everyone is returned when the network is smaller than `limit`; there is
     nothing to choose between and dropping people would only hide options.
     """
-    rows = list_for_owner(db, owner_name)
+    rows = list_for_owner(db, owner_id)
     if len(rows) <= limit:
         ranked = rows
     else:
