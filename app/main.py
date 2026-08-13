@@ -14,7 +14,9 @@ this next".
 Everything else is scaffolding for that one call:
 
   POST /connect          find a route between two people   -> {"job_id"}
-  POST /discover         map one person's connections      -> {"job_id"}
+  POST /discover         find the standouts in a population you can reach
+                                                           -> {"job_id"}
+  POST /neighbors        map one named person's connections -> {"job_id"}
   GET  /jobs/{id}        status, percent, live log, result
   POST /jobs/{id}/cancel stop a running or queued job
   GET/POST/PATCH/DELETE /boards[/pages]   board persistence, so a found route
@@ -540,9 +542,30 @@ def _run_connect_job(job_id: str, ticket, a: str, b: str,
         db.close()
 
 
-def _run_discover_job(job_id: str, ticket, name: str) -> None:
-    from .route_engine import run_discover
-    _wrapper_job(job_id, ticket, run_discover, name)
+def _run_neighbors_job(job_id: str, ticket, name: str) -> None:
+    from .route_engine import run_neighbors
+    _wrapper_job(job_id, ticket, run_neighbors, name)
+
+
+def _run_discover_job(job_id: str, ticket, prompt: str, origin: str, ask: str,
+                      origin_context: str, limit: int,
+                      operator_id: str, operator_name: str) -> None:
+    """Open-ended people search. Opens its own DB session: this runs on a worker
+    thread, long after the request-scoped session from Depends() was closed.
+
+    `operator_id` and `operator_name` are carried from the resolved identity at
+    request time — the worker has no request to re-derive them from, and they
+    must not be re-read from anything the caller sent."""
+    from .discover_engine import run_discover
+    from .db import BoardsSessionLocal
+
+    db = BoardsSessionLocal()
+    try:
+        _wrapper_job(job_id, ticket, run_discover, prompt, origin, ask,
+                     origin_context, limit, db=db, operator_id=operator_id,
+                     operator_name=operator_name)
+    finally:
+        db.close()
 
 
 @app.post("/connect")
@@ -586,14 +609,69 @@ def connect(req: dict, request: Request,
 
 
 @app.post("/discover")
-def discover(req: dict, request: Request) -> dict:
-    """Map one person's closest verified professional connections.
+def discover(req: dict, request: Request,
+             op: auth.Operator = Depends(require_operator)) -> dict:
+    """Find the standouts in a population, ranked by whether you can reach them.
+
+    Body: {"prompt", "origin"?, "origin_context"?, "ask"?, "limit"?}
+
+    `prompt` is the population in your own words — "superintendents", "software
+    engineers who work on compilers". It is deliberately not validated beyond
+    being non-empty: the wrapper interprets it and reports the interpretation
+    back in `interpretation`, so a wrong reading is visible on screen rather than
+    rejected at the door.
+
+    `origin` is who is doing the looking, and defaults to the authenticated
+    operator. It gates one thing, exactly as /connect does: when it matches the
+    resolved operator's configured name, that operator's own imported
+    connections are searched — as candidates they already know, and as bridges
+    into the ones they do not. Naming anyone else omits the list entirely.
+    Identity comes from the session; a caller cannot claim to be someone else
+    and borrow their contacts.
+
+    `origin_context` qualifies the origin ("Superintendent of Cabell County
+    Schools, WV"). Optional, and worth supplying: the origin's surface is what
+    bounds an unscoped population and what a reach claim is measured against.
+    Unlike /connect's contexts it is not required — a wrong origin here returns a
+    list nobody can reach, which is visible, rather than a confident route to the
+    wrong person, which is not."""
+    prompt = _str_field(req, "prompt")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt required")
+    origin = _str_field(req, "origin") or op.name
+    origin_context = _str_field(req, "origin_context")
+    ask = _str_field(req, "ask") or "N/A"
+
+    # Imported here rather than at module scope for the same reason the engines
+    # are: it pulls in the Anthropic SDK, and nothing that only serves boards
+    # should pay for that at startup. The engine clamps the value; this only has
+    # to reject a non-number before it reaches a worker thread.
+    from .discover_engine import DEFAULT_LIMIT
+
+    limit = req.get("limit", DEFAULT_LIMIT)
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="'limit' must be an integer")
+
+    return _start_build_job(
+        request, "discover", _run_discover_job,
+        (prompt, origin, ask, origin_context, limit, op.id, op.name))
+
+
+@app.post("/neighbors")
+def neighbors(req: dict, request: Request) -> dict:
+    """Map one named person's closest verified professional connections.
+
+    This was /discover until the open-ended population search took that name.
+    The two answer different questions: this one expands a person you can already
+    name, /discover finds the people worth naming.
 
     `depth` is accepted and ignored — see /connect."""
     name = _str_field(req, "person_name")
     if not name:
         raise HTTPException(status_code=400, detail="person_name required")
-    return _start_build_job(request, "discover", _run_discover_job, (name,))
+    return _start_build_job(request, "neighbors", _run_neighbors_job, (name,))
 
 
 def _get_owned_board(db: Session, board_id: str, owner_id: str) -> Board:

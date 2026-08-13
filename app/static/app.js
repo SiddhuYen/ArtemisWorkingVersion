@@ -42,8 +42,8 @@ function hasOperatorName() {
 }
 function setOperatorName(name) {
   localStorage.setItem('artemis_operator_name', name);
-  ['hvBadge','ctBadge','drBadge'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent = name.slice(0,2).toUpperCase(); });
-  ['hvUserName','ctUserName','drUserName'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent = name.toUpperCase(); });
+  ['hvBadge','ctBadge','exBadge','dscBadge'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent = name.slice(0,2).toUpperCase(); });
+  ['hvUserName','ctUserName','exUserName','dscUserName'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent = name.toUpperCase(); });
 }
 function renameOperator() {
   const next = (prompt('Operator name:', operatorName()) || '').trim();
@@ -491,7 +491,7 @@ async function submitCreateBoard() {
     closeCreateModal();
     await openBoard(summary.id);
 
-    // designate the starting/target people straight away, same as Discover
+    // designate the starting/target people straight away
     const pg = currentPage();
     if (pg) {
       const w = document.getElementById('wrapper');
@@ -696,7 +696,8 @@ document.addEventListener('keydown',e=>{
       if(selectedIds.size>0){selectedIds.clear();renderMultiSel();break;}
       if(document.getElementById('liScrim')?.classList.contains('open')){closeLinkedInImport();break;}
       if(introAdviceOpen()){closeIntroAdvice();break;}
-      if(document.getElementById('discoverScrim')?.classList.contains('open')){closeDiscoverModal();break;}
+      if(document.getElementById('dscScrim')?.classList.contains('open')){closeDiscoverModal();break;}
+      if(document.getElementById('expandScrim')?.classList.contains('open')){closeExpandModal();break;}
       if(mode!=='normal')exitMode();else closeDetail();break;
     case'c':case'C':toggleMode('connect');break;
     case'd':case'D':toggleMode('delete');break;
@@ -1105,7 +1106,8 @@ function closeManualMenu(){
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.tb-menu-wrap')) closeManualMenu();
 });
-// Discover-results "source" cards carry their URL in a data attribute (never
+// Result cards across Discover and Expand carry their source URL in a data
+// attribute (never
 // inline onclick=""): an inline handler's string is HTML-entity-decoded before
 // it's run as JS, so escaping quotes in esc() wouldn't stop a source_url
 // (live web-search data) from breaking out of the handler's JS string.
@@ -1413,37 +1415,397 @@ function submitImport() {
 }
 
 // ══════════════════════════════════════════════════════
-// DISCOVER — pick a person already on this board page and expand their real
+// DISCOVER — open-ended people search. You type a population in your own
+// words ("superintendents", "software engineers who work on compilers") and
+// the backend returns the members of it who have actually built something,
+// ranked by whether your network reaches them.
+//
+// This is the sibling of ROUTE, not of EXPAND. Route answers "can I get to
+// this named person"; Discover answers the question before it, "who should
+// that person be" — and hands each answer straight back to Route, which is
+// what turns a one-sentence reach claim into a sourced chain.
+// ══════════════════════════════════════════════════════
+let _dscRunSeq = 0;
+let _dscData = null;
+
+function openDiscoverModal() {
+  _dscRunSeq++;
+  closeDetail();
+  // Restores the board underneath, so NEW SEARCH from the results view has
+  // something behind the modal to fall back to when it is cancelled. A no-op
+  // when the modal is opened from the toolbar and the results view is closed.
+  closeDiscoverResultsView();
+  const st = document.getElementById('dscStatus'); st.textContent=''; st.className='dm-status';
+  const btn = document.getElementById('dscSubmitBtn');
+  btn.disabled = false; btn.textContent = 'RUN DISCOVER ▸';
+  document.getElementById('dscProgress')?.classList.remove('on');
+  const fill = document.getElementById('dscProgressFill'); if (fill) fill.style.width = '0%';
+  const log = document.getElementById('dscLog'); if (log) { log.innerHTML=''; log.classList.remove('on'); }
+  // The origin defaults to whoever this browser is, because that is the answer
+  // 99% of the time and typing your own name into a box you already told the
+  // app about is friction for nothing. Still editable: searching from someone
+  // else is legitimate, it just means the backend withholds your imported
+  // connections, which are evidence about you and nobody else.
+  const originEl = document.getElementById('dscOrigin');
+  if (originEl && !originEl.value.trim() && hasOperatorName()) originEl.value = operatorName();
+  document.getElementById('dscScrim').classList.add('open');
+  document.getElementById('dscPrompt')?.focus();
+}
+
+function closeDiscoverModal(cancelRun = true) {
+  if (cancelRun) _dscRunSeq++;
+  document.getElementById('dscScrim').classList.remove('open');
+}
+
+function dscScrimClick(e) {
+  if (e.target === document.getElementById('dscScrim')) closeDiscoverModal();
+}
+
+function dscUseExample(text) {
+  const el = document.getElementById('dscPrompt');
+  if (el) { el.value = text; el.focus(); }
+}
+
+async function submitDiscover() {
+  const runSeq = ++_dscRunSeq;
+  const statusEl = document.getElementById('dscStatus');
+  const prompt = (document.getElementById('dscPrompt')?.value || '').trim();
+  if (!prompt) {
+    statusEl.textContent = 'Name who you are looking for.';
+    statusEl.className = 'dm-status err';
+    document.getElementById('dscPrompt')?.focus();
+    return;
+  }
+  const origin = (document.getElementById('dscOrigin')?.value || '').trim();
+  const originContext = (document.getElementById('dscOriginContext')?.value || '').trim();
+  const ask = (document.getElementById('dscAsk')?.value || '').trim();
+  const limit = parseInt(document.getElementById('dscLimit')?.value, 10) || 10;
+
+  const btn = document.getElementById('dscSubmitBtn');
+  btn.disabled = true; btn.textContent = 'SEARCHING…';
+  statusEl.textContent = 'Searching the live web — this runs up to 30 searches and takes a few minutes.';
+  statusEl.className = 'dm-status';
+  const progressEl = document.getElementById('dscProgress');
+  const fillEl = document.getElementById('dscProgressFill');
+  const logEl = document.getElementById('dscLog');
+  const setProgress = progressTracker(fillEl);
+  progressEl?.classList.add('on');
+  if (fillEl) fillEl.style.width = '0%';
+  if (logEl) { logEl.innerHTML = ''; logEl.classList.add('on'); }
+  let shownLogLines = 0;
+
+  try {
+    const started = await (await fetch('/discover', {
+      method: 'POST', headers: API_HEADERS,
+      // `origin` is a name, not an identity: the backend resolves who is asking
+      // from the session and only lends out the imported connections when the
+      // two match. Sending it here just says whose surface to search from.
+      body: JSON.stringify({ prompt, origin, origin_context: originContext, ask, limit }),
+    })).json();
+    if (started.detail) throw new Error(started.detail);
+    const data = await pollJob(started.job_id, job => {
+      if (runSeq !== _dscRunSeq) return;
+      const pct = setProgress(job);
+      if (job.message) statusEl.textContent = `[${pct}%] ${job.message}`;
+      // job.log is the full accumulated transcript on every poll, not a delta,
+      // so append only what is new and keep the newest line in view.
+      if (logEl && Array.isArray(job.log) && job.log.length > shownLogLines) {
+        const frag = document.createDocumentFragment();
+        for (let i = shownLogLines; i < job.log.length; i++) {
+          const line = document.createElement('div');
+          line.className = 'dm-log-line';
+          line.textContent = job.log[i];
+          frag.appendChild(line);
+        }
+        logEl.appendChild(frag);
+        shownLogLines = job.log.length;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    }, 900, () => runSeq !== _dscRunSeq);
+    if (runSeq !== _dscRunSeq) return;
+    if (!data.found) throw new Error(data.reason || `Nobody found for "${prompt}".`);
+    closeDiscoverModal(false);
+    showDiscoverResultsView(data);
+  } catch (e) {
+    if (runSeq !== _dscRunSeq) return;
+    statusEl.textContent = e.message || 'Discover failed.';
+    statusEl.className = 'dm-status err';
+  } finally {
+    if (runSeq === _dscRunSeq) {
+      btn.disabled = false; btn.textContent = 'RUN DISCOVER ▸';
+      progressEl?.classList.remove('on');
+    }
+  }
+}
+
+// ── DISCOVER RESULTS ──────────────────────────────────
+// Grouped by reach, because that is the only axis the operator acts on: what
+// you do next differs completely between "you already know them" and "no route
+// in". Within a group they stay in backend order, which is already ranked.
+const DSC_GROUPS = [
+  { key: 'direct',       title: 'YOU ALREADY KNOW THEM',
+    why: 'in your imported connections, or publicly tied to you' },
+  { key: 'bridged',      title: 'ONE INTRO AWAY',
+    why: 'a named person connects you — trace the route to source it' },
+  { key: 'surface_only', title: 'CLOSE TO SOMEONE, NOT TO YOU',
+    why: 'we can name who is near them; nothing joins them back to you' },
+  { key: 'cold',         title: 'NO ROUTE IN',
+    why: 'here on merit — you may know something the public record does not' },
+];
+
+function showDiscoverResultsView(data) {
+  _dscData = data;
+  document.getElementById('homeView').style.display = 'none';
+  document.getElementById('boardView').style.display = 'none';
+  document.getElementById('contactsView').style.display = 'none';
+  document.getElementById('expandResultsView').style.display = 'none';
+  document.getElementById('dscResultsView').style.display = 'flex';
+
+  document.getElementById('dscSub').textContent = `// ${(data.prompt || '').toUpperCase()}`;
+  document.getElementById('dscTitle').textContent = (data.prompt || 'DISCOVER').toUpperCase();
+  document.getElementById('dscSearch').value = '';
+  setOperatorName(operatorName());
+  renderDiscoverResults();
+}
+
+function closeDiscoverResultsView(showBoard = true) {
+  const view = document.getElementById('dscResultsView');
+  if (!view) return;
+  const wasOpen = view.style.display === 'flex';
+  view.style.display = 'none';
+  if (wasOpen && showBoard) document.getElementById('boardView').style.display = 'flex';
+}
+
+function dscTierLabel(standout) {
+  return { exceptional: 'EXCEPTIONAL', strong: 'STRONG', notable: 'NOTABLE' }[standout] || 'NOTABLE';
+}
+
+// The reach line is the claim most likely to be wrong and the one the operator
+// will act on, so it is rendered with its basis attached rather than as a badge
+// on its own. A status with no evidence behind it never reaches here — the
+// backend downgrades those to surface_only before they ship.
+function dscReachHtml(reach) {
+  if (!reach || !reach.basis) return '';
+  const via = reach.via
+    ? `<b>${esc(reach.via)}</b>${reach.via_locator ? ` (${esc(reach.via_locator)})` : ''} — `
+    : '';
+  const hops = reach.hops ? ` · ${reach.hops} HOP${reach.hops !== 1 ? 'S' : ''}` : '';
+  const strength = reach.strength ? ` · ${esc(reach.strength.toUpperCase())}` : '';
+  const src = reach.source_url
+    ? ` <a href="${esc(reach.source_url)}" target="_blank" rel="noopener noreferrer">↗</a>`
+    : '';
+  return `<div class="dsc-reach ${esc(reach.status || 'cold')}">
+    <div class="dsc-reach-hd">${esc((reach.label || '').toUpperCase())}${hops}${strength}</div>
+    ${via}${esc(reach.basis)}${src}
+  </div>`;
+}
+
+function dscEvidenceHtml(evidence) {
+  if (!evidence || !evidence.length) return '';
+  return `<div class="dsc-src">${evidence.map(e => {
+    const label = esc((e.object || 'source').slice(0, 58));
+    const when = e.evidence_date ? ` · ${esc(e.evidence_date)}` : '';
+    return e.source_url
+      ? `<a href="${esc(e.source_url)}" target="_blank" rel="noopener noreferrer" title="${esc(e.object||'')}">${label}${when} ↗</a>`
+      : `<span class="nolink" title="${esc(e.object||'')}">${label}${when} · no link</span>`;
+  }).join('')}</div>`;
+}
+
+function dscCardHtml(cand, idx) {
+  const tier = cand.standout || 'notable';
+  const roleLine = [cand.role, cand.org].filter(Boolean).join(' · ') || cand.locator || '';
+  return `<div class="dsc-card">
+    <div class="dsc-card-hd">
+      <div class="dsc-av">${initials(cand.label || '?')}</div>
+      <div class="dsc-id">
+        <div class="dsc-name">${esc(cand.label || '')}</div>
+        ${roleLine ? `<div class="dsc-role">${esc(roleLine)}</div>` : ''}
+      </div>
+      <span class="dsc-tier ${esc(tier)}">${dscTierLabel(tier)}</span>
+    </div>
+    ${cand.why_cracked ? `<div class="dsc-why">${esc(cand.why_cracked)}</div>` : ''}
+    ${dscEvidenceHtml(cand.evidence)}
+    ${dscReachHtml(cand.reach)}
+    ${cand.opening ? `<div class="dsc-why" style="color:var(--ink-faint)">▸ ${esc(cand.opening)}</div>` : ''}
+    <div class="dsc-acts">
+      <button class="dsc-act primary" onclick="dscRouteTo(${idx})">TRACE ROUTE ▸</button>
+      <button class="dsc-act" onclick="dscAddToBoard(${idx})">＋ BOARD</button>
+    </div>
+  </div>`;
+}
+
+function renderDiscoverResults() {
+  if (!_dscData) return;
+  const filter = (document.getElementById('dscSearch')?.value || '').toLowerCase();
+  const all = _dscData.candidates || [];
+  const match = c => !filter ||
+    (c.label || '').toLowerCase().includes(filter) ||
+    (c.org || '').toLowerCase().includes(filter) ||
+    (c.role || '').toLowerCase().includes(filter) ||
+    (c.why_cracked || '').toLowerCase().includes(filter) ||
+    ((c.reach && c.reach.via) || '').toLowerCase().includes(filter);
+
+  const el = id => document.getElementById(id);
+  if (el('dscCount')) el('dscCount').textContent = `[ ${all.length} ]`;
+  if (el('dscFooterR')) el('dscFooterR').textContent =
+    `${all.length} CANDIDATE${all.length !== 1 ? 'S' : ''} · ${_dscData.reachable_count || 0} REACHABLE`;
+
+  // How the prompt was read, shown up front. An open-ended search can be
+  // interpreted wrongly in a way that is invisible in the results themselves —
+  // a list of superintendents is a plausible answer to the wrong question — so
+  // the interpretation ships alongside the answer instead of behind it.
+  const interp = _dscData.interpretation || {};
+  const readEl = el('dscRead');
+  if (readEl) {
+    const scopeNote = interp.scope_source === 'origin'
+      ? ' <span style="color:var(--ink-faint)">(borrowed from your own world — name a scope to change it)</span>'
+      : interp.scope_source === 'unbounded'
+        ? ' <span style="color:var(--ink-faint)">(unbounded — add a region or specialty to narrow it)</span>'
+        : '';
+    const signals = (interp.excellence_signals || [])
+      .map(s => `<span>${esc(s)}</span>`).join('');
+    readEl.innerHTML = `
+      <div class="dsc-read-line">${esc(_dscData.brief || '')}</div>
+      <div class="dsc-read-line" style="margin-top:6px">
+        Looked for <b>${esc(interp.population || _dscData.prompt || '')}</b>${
+          interp.scope ? ` in <b>${esc(interp.scope)}</b>` : ''}${scopeNote}
+        ${_dscData.origin ? ` · from <b>${esc(_dscData.origin)}</b>` : ''}
+      </div>
+      ${signals ? `<div class="dsc-read-sig">${signals}</div>` : ''}`;
+  }
+
+  const groupsEl = el('dscGroups');
+  if (!groupsEl) return;
+  const shown = all.map((c, i) => ({ c, i })).filter(({ c }) => match(c));
+  if (!shown.length) {
+    groupsEl.innerHTML = `<div class="hv-no-match" style="padding:50px 0">// NOBODY MATCHES THAT FILTER</div>`;
+  } else {
+    groupsEl.innerHTML = DSC_GROUPS.map(g => {
+      const rows = shown.filter(({ c }) => (c.reach && c.reach.status) === g.key);
+      if (!rows.length) return '';
+      return `<div class="dsc-group">
+        <div class="dsc-group-hd">
+          <h3>${g.title}</h3><span class="n">[ ${rows.length} ]</span>
+          <span class="why">${g.why}</span>
+        </div>
+        <div class="dsc-grid">${rows.map(({ c, i }) => dscCardHtml(c, i)).join('')}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // The verify list. Every unconfirmed title and date the run is aware of comes
+  // back in notes, and it belongs on screen: the names are the reliable part of
+  // this answer and the details around them are a draft.
+  const notesEl = el('dscNotes');
+  const notes = (_dscData.warm_intro && _dscData.warm_intro.notes) || [];
+  if (notesEl) {
+    notesEl.innerHTML = notes.length
+      ? `<div class="dsc-notes-hd">// CHECK BEFORE YOU SEND</div>
+         <ul>${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`
+      : '';
+  }
+}
+
+// Drop a candidate onto the current board page, carrying their role/org across
+// so the node is not a bare name the route finder would then reject.
+function dscPlaceCandidate(pg, cand, offset = 0) {
+  // ＋ BOARD is pressed from the results screen, where the board is hidden and
+  // therefore measures zero — fall back to a nominal viewport so candidates land
+  // in the middle of the canvas rather than stacked at the pan origin.
+  const w = document.getElementById('wrapper');
+  const cx = (((w && w.clientWidth) || 1200) / 2 - panX) / zoom;
+  const cy = (((w && w.clientHeight) || 800) / 2 - panY) / zoom;
+  const ring = 190 + 60 * Math.floor(offset / 8);
+  const angle = (offset % 8) * (Math.PI / 4);
+  const p = findOrCreatePerson(pg, cand.label,
+    cx + ring * Math.cos(angle), cy + ring * Math.sin(angle));
+  if (!p.role && cand.context) p.role = cand.context;
+  if (!p.description && cand.why_cracked) p.description = cand.why_cracked;
+  return p;
+}
+
+function dscRequirePage() {
+  const pg = currentPage();
+  if (!pg) {
+    alert('Open a board first — candidates are placed on the current page.');
+    return null;
+  }
+  return pg;
+}
+
+function dscAddToBoard(idx) {
+  const cand = (_dscData?.candidates || [])[idx];
+  const pg = dscRequirePage();
+  if (!cand || !pg) return;
+  dscPlaceCandidate(pg, cand, pg.people.length);
+  save(); render();
+}
+
+function dscAddAllToBoard() {
+  const all = _dscData?.candidates || [];
+  const pg = dscRequirePage();
+  if (!all.length || !pg) return;
+  all.forEach((c, i) => dscPlaceCandidate(pg, c, pg.people.length + i));
+  save(); render();
+  closeDiscoverResultsView();
+}
+
+// The hand-off that makes a reach claim real. Discover sizes reach in one
+// sentence across a whole population; /connect spends a full research budget on
+// one pair and comes back with a sourced chain or an honest refusal. Placing
+// both people, tagging them as the page's endpoints, and opening the route
+// finder is what carries the candidate over — including their role and org,
+// without which /connect correctly refuses to run on a bare name.
+function dscRouteTo(idx) {
+  const cand = (_dscData?.candidates || [])[idx];
+  const pg = dscRequirePage();
+  if (!cand || !pg) return;
+
+  const originName = (_dscData.origin || '').split(',')[0].trim() || operatorName();
+  const originContext = (_dscData.origin || '').split(',').slice(1).join(',').trim();
+  const origin = dscPlaceCandidate(pg, { label: originName, context: originContext },
+                                   pg.people.length);
+  const target = dscPlaceCandidate(pg, cand, pg.people.length);
+  pg.startPersonId = origin.id;
+  pg.targetPersonId = target.id;
+
+  save(); render();
+  closeDiscoverResultsView();
+  showBoardRouteFinder();
+}
+
+// ══════════════════════════════════════════════════════
+// EXPAND — pick a person already on this board page and expand their real
 // public network (live web search, 2 hops deep by default) into a full-screen
 // "<name>'s Connections" view, styled like My Connections. This is the actual
 // discovery feature; Route Finder's Starting Person / Target are tagged
 // directly on a node's detail card (📍/🎯) instead of through this modal.
 // ══════════════════════════════════════════════════════
-let _dvSelectedId = null;
-let _dvRunSeq = 0;
+let _exSelectedId = null;
+let _exRunSeq = 0;
 
-function openDiscoverModal() {
-  _dvRunSeq++;
+function openExpandModal() {
+  _exRunSeq++;
   closeDetail();
-  _dvSelectedId = null;
-  const st = document.getElementById('dvStatus'); st.textContent=''; st.className='dvm-status';
-  document.getElementById('dvSubmitBtn').disabled = false;
-  document.getElementById('dvSubmitBtn').textContent = 'RUN DISCOVER ▸';
-  document.getElementById('dvProgress')?.classList.remove('on');
-  const dvFill = document.getElementById('dvProgressFill'); if (dvFill) dvFill.style.width = '0%';
-  renderDiscoverPicker();
-  document.getElementById('discoverScrim').classList.add('open');
+  _exSelectedId = null;
+  const st = document.getElementById('exStatus'); st.textContent=''; st.className='exm-status';
+  document.getElementById('exSubmitBtn').disabled = false;
+  document.getElementById("exSubmitBtn").textContent = "RUN EXPAND ▸";
+  document.getElementById('exProgress')?.classList.remove('on');
+  const exFill = document.getElementById('exProgressFill'); if (exFill) exFill.style.width = '0%';
+  renderExpandPicker();
+  document.getElementById('expandScrim').classList.add('open');
 }
-function closeDiscoverModal(cancelRun = true){
-  if (cancelRun) _dvRunSeq++;
-  document.getElementById('discoverScrim').classList.remove('open');
+function closeExpandModal(cancelRun = true){
+  if (cancelRun) _exRunSeq++;
+  document.getElementById('expandScrim').classList.remove('open');
 }
-function discoverScrimClick(e){ if(e.target===document.getElementById('discoverScrim')) closeDiscoverModal(); }
+function expandScrimClick(e){ if(e.target===document.getElementById('expandScrim')) closeExpandModal(); }
 
-function renderDiscoverPicker() {
+function renderExpandPicker() {
   const pg = currentPage();
   const people = (pg && pg.people) || [];
-  const listEl = document.getElementById('dvPersonList');
+  const listEl = document.getElementById('exPersonList');
   if (!people.length) {
     listEl.innerHTML = '<div class="cp-empty">No one on this page yet.<br>Add a person to the board first.</div>';
     return;
@@ -1453,21 +1815,21 @@ function renderDiscoverPicker() {
     const avatar = p.photo
       ? `<div class="cp-avatar"><img src="${esc(p.photo)}" onerror="this.parentNode.textContent='${ini2}'"></div>`
       : `<div class="cp-avatar">${ini2}</div>`;
-    const sel = p.id === _dvSelectedId;
-    return `<div class="cp-item dv-pick-item${sel?' sel':''}" onclick="selectDiscoverPerson('${p.id}')">
+    const sel = p.id === _exSelectedId;
+    return `<div class="cp-item ex-pick-item${sel?' sel':''}" onclick="selectExpandPerson('${p.id}')">
       ${avatar}
       <div class="cp-info">
         <div class="cp-name">${esc(p.name)}</div>
         ${p.role ? `<div class="cp-role">${esc(p.role)}</div>` : ''}
       </div>
-      <span class="dv-pick-mark">${sel?'✓':''}</span>
+      <span class="ex-pick-mark">${sel?'✓':''}</span>
     </div>`;
   }).join('');
 }
 
-function selectDiscoverPerson(id) {
-  _dvSelectedId = id;
-  renderDiscoverPicker();
+function selectExpandPerson(id) {
+  _exSelectedId = id;
+  renderExpandPicker();
 }
 
 // Polls GET /jobs/{id} (a background /discover or /connect run) until it
@@ -1510,46 +1872,46 @@ function progressTracker(fillEl) {
   };
 }
 
-async function submitDiscover() {
-  const runSeq = ++_dvRunSeq;
-  const statusEl = document.getElementById('dvStatus');
+async function submitExpand() {
+  const runSeq = ++_exRunSeq;
+  const statusEl = document.getElementById('exStatus');
   const pg = currentPage();
-  const person = _dvSelectedId && pg && pg.people.find(p => p.id === _dvSelectedId);
-  if (!person) { statusEl.textContent='Select who to run Discover on.'; statusEl.className='dvm-status err'; return; }
+  const person = _exSelectedId && pg && pg.people.find(p => p.id === _exSelectedId);
+  if (!person) { statusEl.textContent='Select who to expand.'; statusEl.className='exm-status err'; return; }
 
-  const depth = parseInt(document.getElementById('dvDepth').value, 10) || 2;
-  const btn = document.getElementById('dvSubmitBtn');
+  const depth = parseInt(document.getElementById('exDepth').value, 10) || 2;
+  const btn = document.getElementById('exSubmitBtn');
   btn.disabled = true; btn.textContent = 'SEARCHING…';
   statusEl.textContent = `Expanding ${person.name}'s network (this reaches out to the live web, it can take a bit)…`;
-  statusEl.className = 'dvm-status';
-  const progressEl = document.getElementById('dvProgress');
-  const fillEl = document.getElementById('dvProgressFill');
+  statusEl.className = 'exm-status';
+  const progressEl = document.getElementById('exProgress');
+  const fillEl = document.getElementById('exProgressFill');
   const setProgress = progressTracker(fillEl);
   progressEl?.classList.add('on');
   if (fillEl) fillEl.style.width = '0%';
 
   try {
-    const started = await (await fetch('/discover', {
+    const started = await (await fetch('/neighbors', {
       method: 'POST', headers: API_HEADERS,
       body: JSON.stringify({ person_name: person.name, depth }),
     })).json();
     if (started.detail) throw new Error(started.detail);
     const data = await pollJob(started.job_id, job => {
-      if (runSeq !== _dvRunSeq) return;
+      if (runSeq !== _exRunSeq) return;
       const pct = setProgress(job);
       if (job.message) statusEl.textContent = `[${pct}%] ${job.message}`;
-    }, 700, () => runSeq !== _dvRunSeq);
-    if (runSeq !== _dvRunSeq) return;
+    }, 700, () => runSeq !== _exRunSeq);
+    if (runSeq !== _exRunSeq) return;
     if (!data.found) throw new Error(data.reason || `Nobody found connected to ${person.name}.`);
-    closeDiscoverModal(false);
-    showDiscoverResultsView(data, depth);
+    closeExpandModal(false);
+    showExpandResultsView(data, depth);
   } catch (e) {
-    if (runSeq !== _dvRunSeq) return;
-    statusEl.textContent = e.message || 'Discover failed.';
-    statusEl.className = 'dvm-status err';
+    if (runSeq !== _exRunSeq) return;
+    statusEl.textContent = e.message || "Expand failed.";
+    statusEl.className = 'exm-status err';
   } finally {
-    if (runSeq === _dvRunSeq) {
-      btn.disabled = false; btn.textContent = 'RUN DISCOVER ▸';
+    if (runSeq === _exRunSeq) {
+      btn.disabled = false; btn.textContent = "RUN EXPAND ▸";
       progressEl?.classList.remove('on');
     }
   }
@@ -1567,59 +1929,59 @@ function findOrCreatePerson(pg, name, x, y) {
 }
 
 // ══════════════════════════════════════════════════════
-// DISCOVER RESULTS — "<name>'s Connections" full-screen view
+// EXPAND RESULTS — "<name>'s Connections" full-screen view
 // ══════════════════════════════════════════════════════
-let _drPerson = '';
-let _drDepth = 2;
-let _drConnections = [];
+let _exPerson = '';
+let _exDepth = 2;
+let _exConnections = [];
 
 function humanizeRelType(t) {
   if (!t || t === 'unknown') return 'Connection';
   return t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-function showDiscoverResultsView(data, depth) {
-  _drPerson = data.person;
-  _drDepth = depth;
-  _drConnections = data.connections || [];
+function showExpandResultsView(data, depth) {
+  _exPerson = data.person;
+  _exDepth = depth;
+  _exConnections = data.connections || [];
 
   document.getElementById('homeView').style.display = 'none';
   document.getElementById('boardView').style.display = 'none';
   document.getElementById('contactsView').style.display = 'none';
-  document.getElementById('discoverResultsView').style.display = 'flex';
+  document.getElementById('expandResultsView').style.display = 'flex';
 
-  document.getElementById('drSub').textContent = `// ${_drPerson.toUpperCase()}'S NETWORK`;
-  document.getElementById('drTitle').textContent = `${_drPerson.toUpperCase()}'S CONNECTIONS`;
-  document.getElementById('drSearch').value = '';
+  document.getElementById('exSub').textContent = `// ${_exPerson.toUpperCase()}'S NETWORK`;
+  document.getElementById('exTitle').textContent = `${_exPerson.toUpperCase()}'S CONNECTIONS`;
+  document.getElementById('exSearch').value = '';
   setOperatorName(operatorName());
-  renderDiscoverResults();
+  renderExpandResults();
 }
 
-function closeDiscoverResultsView() {
-  document.getElementById('discoverResultsView').style.display = 'none';
+function closeExpandResultsView() {
+  document.getElementById('expandResultsView').style.display = 'none';
   document.getElementById('boardView').style.display = 'flex';
 }
 
-function renderDiscoverResults() {
-  const filter = (document.getElementById('drSearch')?.value || '').toLowerCase();
-  let shown = _drConnections.slice();
+function renderExpandResults() {
+  const filter = (document.getElementById('exSearch')?.value || '').toLowerCase();
+  let shown = _exConnections.slice();
   if (filter) shown = shown.filter(c =>
     c.label.toLowerCase().includes(filter) ||
     humanizeRelType(c.relationship_type).toLowerCase().includes(filter)
   );
 
   const el = id => document.getElementById(id);
-  if (el('drCount')) el('drCount').textContent = `[ ${_drConnections.length} ]`;
-  if (el('drFooterR')) el('drFooterR').textContent =
-    `${_drConnections.length} CONNECTION${_drConnections.length!==1?'S':''} · ${_drDepth} HOP${_drDepth!==1?'S':''} DEEP`;
+  if (el('exCount')) el('exCount').textContent = `[ ${_exConnections.length} ]`;
+  if (el('exFooterR')) el('exFooterR').textContent =
+    `${_exConnections.length} CONNECTION${_exConnections.length!==1?'S':''} · ${_exDepth} HOP${_exDepth!==1?'S':''} DEEP`;
 
-  const grid = el('drGrid');
+  const grid = el('exGrid');
   if (!grid) return;
 
-  if (!_drConnections.length) {
+  if (!_exConnections.length) {
     grid.innerHTML = `<div class="hv-no-match" style="padding:60px 0">
       <div style="font-family:var(--display-hv,'Rajdhani');font-size:36px;color:var(--ink-faint);margin-bottom:10px">NOTHING FOUND</div>
-      No public connections turned up for ${esc(_drPerson)} within ${_drDepth} hop${_drDepth!==1?'s':''}.
+      No public connections turned up for ${esc(_exPerson)} within ${_exDepth} hop${_exDepth!==1?'s':''}.
     </div>`;
     return;
   }
@@ -3329,7 +3691,8 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('ctAddScrim')?.classList.contains('open'))    { closeAddContactModal(); return; }
     if (document.getElementById('ctRail')?.classList.contains('open'))        { closeContactRail(); return; }
     if (document.getElementById('bvRoutePanel')?.classList.contains('open'))  { closeBoardRouteFinder(); return; }
-    if (document.getElementById('discoverScrim')?.classList.contains('open')){ closeDiscoverModal(); return; }
+    if (document.getElementById('dscScrim')?.classList.contains('open'))      { closeDiscoverModal(); return; }
+    if (document.getElementById('expandScrim')?.classList.contains('open')){ closeExpandModal(); return; }
     if (document.getElementById('hvImportScrim')?.classList.contains('open')) { closeImportPreview(); return; }
     if (document.getElementById('hvModalScrim')?.classList.contains('open'))  { closeCreateModal(); return; }
     if (document.getElementById('hvRail')?.classList.contains('open'))        { closeDetailRail(); return; }

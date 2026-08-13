@@ -398,16 +398,20 @@ def run_route(
     }
 
 
-def run_discover(
+def run_neighbors(
     person_name: str,
     on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Map one person's closest verified professional connections.
 
-    Answers /discover. `hops` is always 1 here: these are direct connections to
-    the person, not a multi-hop expansion — the old engine's depth-N crawl has
-    no equivalent, and reporting a fake hop count would be worse than reporting
-    the true one.
+    Answers /neighbors — "who is around this named person". Not to be confused
+    with /discover, which takes a population rather than a person and lives in
+    `discover_engine`; this one was called `run_discover` until that feature
+    took the name.
+
+    `hops` is always 1 here: these are direct connections to the person, not a
+    multi-hop expansion — the old engine's depth-N crawl has no equivalent, and
+    reporting a fake hop count would be worse than reporting the true one.
     """
     cfg = PathfinderConfig(search_ceiling=SEARCH_CEILING, progress_sink=on_progress)
 

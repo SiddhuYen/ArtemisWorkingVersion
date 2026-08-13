@@ -243,6 +243,76 @@ def _seniority(title: str) -> int:
     return 0
 
 
+def _stem(term: str) -> str:
+    """Crudely singularise, so 'superintendents' matches a 'Superintendent'.
+
+    Deliberately not a real stemmer. Discover is handed a population in the
+    operator's own words — "superintendents", "software engineers", "founders" —
+    and a LinkedIn title is written in the singular, so exact term matching
+    misses on the plural every single time. Stripping a trailing 's' (and 'es'
+    after a sibilant) covers essentially every English job title; anything
+    cleverer would need a dependency to fix a problem this size.
+    """
+    if len(term) > 4 and term.endswith("es") and term[-3] in "sxzhio":
+        return term[:-2]
+    if len(term) > 3 and term.endswith("s") and not term.endswith("ss"):
+        return term[:-1]
+    return term
+
+
+def _stems(text: str) -> set[str]:
+    return {_stem(t) for t in _terms(text)}
+
+
+def top_by_query(db: Session, owner_id: str, query: str,
+                 limit: int = 40) -> list[dict[str, Any]]:
+    """The connections most relevant to an open-ended population query.
+
+    Discover asks a different question of the same rows than routing does. A
+    route knows exactly who it is trying to reach and wants the ten people most
+    likely to bridge to that one person. Discover names a population — "school
+    superintendents", "compiler engineers" — and needs two different things from
+    the list at once: connections who are IN that population (they become
+    candidates the operator already knows), and connections who are merely NEAR
+    it (they become bridges). So this ranks on title first, since the population
+    is a role rather than an employer, and then fills any remaining slots with
+    the most senior connections left.
+
+    That fill is deliberate. A query for superintendents matches no row in a
+    list of school-board members and principals, and those are exactly the people
+    who can make the introduction — an empty shortlist would report "you know
+    nobody relevant" when the truth is "nobody's title contains your word".
+    Seniority is the only signal left worth ordering on at that point.
+    """
+    rows = list_for_owner(db, owner_id)
+    if len(rows) <= limit:
+        ranked = rows
+    else:
+        want = _stems(query)
+        matched: list[tuple[int, str, Contact]] = []
+        rest: list[tuple[int, str, Contact]] = []
+        for c in rows:
+            title_hits = len(want & _stems(c.title or ""))
+            company_hits = len(want & _stems(c.company or ""))
+            seniority = _seniority(c.title or "")
+            score = title_hits * 8 + company_hits * 5 + seniority
+            row = (-score, c.canonical_name, c)
+            (matched if (title_hits or company_hits) else rest).append(row)
+        matched.sort()
+        rest.sort()
+        ranked = [c for _, _, c in (matched + rest)[:limit]]
+
+    return [
+        {
+            "name": c.canonical_name,
+            "title": c.title or "",
+            "company": c.company or "",
+            "connected_on": c.connected_on or "",
+        }
+        for c in ranked
+    ]
+
+
 def top_candidates(db: Session, owner_id: str, target: str,
                    limit: int = 10) -> list[dict[str, Any]]:
     """The connections most likely to be able to reach `target`.

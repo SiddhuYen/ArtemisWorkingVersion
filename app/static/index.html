@@ -1102,10 +1102,10 @@ body.gated #liScrim { z-index:220; }
 .cp-add-btn:hover { border-color:var(--accent);color:var(--accent-bright);background:var(--accent-wash); }
 .cp-add-btn.added { border-color:oklch(0.55 0.16 150);color:oklch(0.72 0.18 150);cursor:default; }
 .cp-empty { padding:30px 20px;text-align:center;font-size:11px;color:var(--ink-faint);letter-spacing:0.1em;line-height:1.8; }
-.dv-pick-item { cursor:pointer; }
-.dv-pick-item.sel { background:var(--accent-wash); }
-.dv-pick-item.sel .cp-name { color:var(--accent-bright); }
-.dv-pick-mark { color:var(--accent-bright);font-size:14px;flex-shrink:0;width:16px;text-align:center; }
+.ex-pick-item { cursor:pointer; }
+.ex-pick-item.sel { background:var(--accent-wash); }
+.ex-pick-item.sel .cp-name { color:var(--accent-bright); }
+.ex-pick-mark { color:var(--accent-bright);font-size:14px;flex-shrink:0;width:16px;text-align:center; }
 
 /* ══════════════════════════════════════════════════════
    BOARD VIEW
@@ -1487,10 +1487,10 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
   border-radius: 6px; background: #120c0c; line-height: 1.6;
 }
 
-/* ── DISCOVER MODAL (new) ── */
-#discoverScrim { position:fixed;inset:0;z-index:150;display:none;place-items:center;background:oklch(0.06 0.02 22/0.7);backdrop-filter:blur(2px);padding:20px; }
-#discoverScrim.open { display:grid; }
-#discoverModal {
+/* ── EXPAND MODAL ── */
+#expandScrim { position:fixed;inset:0;z-index:150;display:none;place-items:center;background:oklch(0.06 0.02 22/0.7);backdrop-filter:blur(2px);padding:20px; }
+#expandScrim.open { display:grid; }
+#expandModal {
   width:440px;max-width:100%;position:relative;
   background:linear-gradient(180deg,oklch(0.185 0.016 22),oklch(0.13 0.012 22));
   border:1px solid oklch(0.635 0.205 22);
@@ -1502,22 +1502,115 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
   --ink:oklch(0.93 0.02 22);--ink-dim:oklch(0.74 0.04 22);--ink-mute:oklch(0.58 0.045 22);--ink-faint:oklch(0.44 0.04 22);
   color:var(--ink);
 }
-#discoverModal .dvm-lbl { font-size:10px;letter-spacing:0.3em;color:var(--ink-mute);margin-bottom:4px; }
-#discoverModal h3 { font-family:"Rajdhani","Share Tech Mono",sans-serif;font-weight:700;font-size:22px;letter-spacing:0.06em;margin:0 0 6px;color:var(--accent-bright);text-shadow:0 0 14px var(--accent-glow); }
-#discoverModal .dvm-sub { font-size:10px;color:var(--ink-faint);letter-spacing:0.08em;margin-bottom:18px;line-height:1.6; }
-#discoverModal .dvm-field { margin-bottom:16px; }
-#discoverModal .dvm-field label { display:block;font-size:10px;letter-spacing:0.18em;color:var(--accent-dim);margin-bottom:7px; }
-#discoverModal .dvm-field input,#discoverModal .dvm-field select { width:100%;height:40px;padding:0 12px;background:oklch(0.12 0.012 22/0.7);border:1px solid var(--accent-line);color:var(--ink);font-family:inherit;font-size:14px;letter-spacing:0.04em;outline:0; }
-#discoverModal .dvm-field input:focus,#discoverModal .dvm-field select:focus { border-color:var(--accent);box-shadow:inset 0 0 14px var(--accent-wash); }
-#discoverModal .dvm-field input::placeholder { color:var(--ink-faint); }
-#discoverModal .dvm-status { font-size:11px;color:var(--ink-mute);letter-spacing:0.1em;min-height:16px;margin-bottom:8px; }
-#discoverModal .dvm-status.err { color:oklch(0.65 0.18 28); }
-#discoverModal .dvm-actions { display:flex;gap:10px;margin-top:8px; }
-#discoverModal .dvm-btn { display:inline-flex;align-items:center;justify-content:center;flex:1;height:42px;border:1px solid var(--accent);background:linear-gradient(var(--accent-wash),transparent);color:var(--accent-bright);font-family:inherit;font-size:12px;letter-spacing:0.16em;cursor:pointer;transition:all .16s;text-shadow:0 0 8px var(--accent-glow); }
-#discoverModal .dvm-btn:hover { background:var(--accent);color:var(--bg0);text-shadow:none; }
-#discoverModal .dvm-btn.ghost { border-color:var(--accent-line);color:var(--ink-dim);background:transparent;text-shadow:none; }
-#discoverModal .dvm-btn.ghost:hover { border-color:var(--accent);color:var(--accent-bright);background:var(--accent-wash); }
-#discoverModal .dvm-btn:disabled { opacity:0.4;cursor:not-allowed; }
+#expandModal .exm-lbl { font-size:10px;letter-spacing:0.3em;color:var(--ink-mute);margin-bottom:4px; }
+#expandModal h3 { font-family:"Rajdhani","Share Tech Mono",sans-serif;font-weight:700;font-size:22px;letter-spacing:0.06em;margin:0 0 6px;color:var(--accent-bright);text-shadow:0 0 14px var(--accent-glow); }
+#expandModal .exm-sub { font-size:10px;color:var(--ink-faint);letter-spacing:0.08em;margin-bottom:18px;line-height:1.6; }
+#expandModal .exm-field { margin-bottom:16px; }
+#expandModal .exm-field label { display:block;font-size:10px;letter-spacing:0.18em;color:var(--accent-dim);margin-bottom:7px; }
+#expandModal .exm-field input,#expandModal .exm-field select { width:100%;height:40px;padding:0 12px;background:oklch(0.12 0.012 22/0.7);border:1px solid var(--accent-line);color:var(--ink);font-family:inherit;font-size:14px;letter-spacing:0.04em;outline:0; }
+#expandModal .exm-field input:focus,#expandModal .exm-field select:focus { border-color:var(--accent);box-shadow:inset 0 0 14px var(--accent-wash); }
+#expandModal .exm-field input::placeholder { color:var(--ink-faint); }
+#expandModal .exm-status { font-size:11px;color:var(--ink-mute);letter-spacing:0.1em;min-height:16px;margin-bottom:8px; }
+#expandModal .exm-status.err { color:oklch(0.65 0.18 28); }
+#expandModal .exm-actions { display:flex;gap:10px;margin-top:8px; }
+#expandModal .exm-btn { display:inline-flex;align-items:center;justify-content:center;flex:1;height:42px;border:1px solid var(--accent);background:linear-gradient(var(--accent-wash),transparent);color:var(--accent-bright);font-family:inherit;font-size:12px;letter-spacing:0.16em;cursor:pointer;transition:all .16s;text-shadow:0 0 8px var(--accent-glow); }
+#expandModal .exm-btn:hover { background:var(--accent);color:var(--bg0);text-shadow:none; }
+#expandModal .exm-btn.ghost { border-color:var(--accent-line);color:var(--ink-dim);background:transparent;text-shadow:none; }
+#expandModal .exm-btn.ghost:hover { border-color:var(--accent);color:var(--accent-bright);background:var(--accent-wash); }
+#expandModal .exm-btn:disabled { opacity:0.4;cursor:not-allowed; }
+
+/* ── DISCOVER MODAL ── open-ended population search. Wider than EXPAND
+   because the prompt is free text and the live transcript runs underneath it:
+   a discover run spends 30 searches and can take minutes, so the operator
+   watches it work rather than staring at a bar. ── */
+#dscScrim { position:fixed;inset:0;z-index:150;display:none;place-items:center;background:oklch(0.06 0.02 22/0.7);backdrop-filter:blur(2px);padding:20px; }
+#dscScrim.open { display:grid; }
+#dscModal {
+  width:600px;max-width:100%;max-height:92vh;overflow-y:auto;position:relative;
+  background:linear-gradient(180deg,oklch(0.185 0.016 22),oklch(0.13 0.012 22));
+  border:1px solid oklch(0.635 0.205 22);
+  box-shadow:0 0 60px oklch(0.66 0.21 22/0.4),0 30px 80px oklch(0 0 0/0.6);
+  padding:26px;font-family:"Share Tech Mono","JetBrains Mono",monospace;
+  --accent:oklch(0.635 0.205 22);--accent-bright:oklch(0.72 0.205 22);--accent-dim:oklch(0.52 0.13 22);
+  --accent-line:oklch(0.635 0.205 22/0.30);--accent-glow:oklch(0.66 0.21 22/0.55);--accent-wash:oklch(0.40 0.11 22/0.10);
+  --bg0:oklch(0.13 0.012 22);--bg1:oklch(0.185 0.016 22);
+  --ink:oklch(0.93 0.02 22);--ink-dim:oklch(0.74 0.04 22);--ink-mute:oklch(0.58 0.045 22);--ink-faint:oklch(0.44 0.04 22);
+  color:var(--ink);
+}
+#dscModal .dm-lbl { font-size:10px;letter-spacing:0.3em;color:var(--ink-mute);margin-bottom:4px; }
+#dscModal h3 { font-family:"Rajdhani","Share Tech Mono",sans-serif;font-weight:700;font-size:22px;letter-spacing:0.06em;margin:0 0 6px;color:var(--accent-bright);text-shadow:0 0 14px var(--accent-glow); }
+#dscModal .dm-sub { font-size:10px;color:var(--ink-faint);letter-spacing:0.08em;margin-bottom:18px;line-height:1.6; }
+#dscModal .dm-field { margin-bottom:14px; }
+#dscModal .dm-field label { display:block;font-size:10px;letter-spacing:0.18em;color:var(--accent-dim);margin-bottom:7px; }
+#dscModal .dm-field .hint { color:var(--ink-faint);letter-spacing:0.06em; }
+#dscModal .dm-field input,#dscModal .dm-field select { width:100%;height:40px;padding:0 12px;background:oklch(0.12 0.012 22/0.7);border:1px solid var(--accent-line);color:var(--ink);font-family:inherit;font-size:14px;letter-spacing:0.04em;outline:0; }
+#dscModal .dm-field textarea { width:100%;min-height:64px;resize:vertical;padding:10px 12px;background:oklch(0.12 0.012 22/0.7);border:1px solid var(--accent-line);color:var(--ink);font-family:inherit;font-size:14px;letter-spacing:0.04em;outline:0;line-height:1.5; }
+#dscModal .dm-field input:focus,#dscModal .dm-field select:focus,#dscModal .dm-field textarea:focus { border-color:var(--accent);box-shadow:inset 0 0 14px var(--accent-wash); }
+#dscModal .dm-field input::placeholder,#dscModal .dm-field textarea::placeholder { color:var(--ink-faint); }
+#dscModal .dm-row { display:flex;gap:12px; }
+#dscModal .dm-row > .dm-field { flex:1;min-width:0; }
+#dscModal .dm-examples { display:flex;flex-wrap:wrap;gap:6px;margin:-6px 0 16px; }
+#dscModal .dm-chip { font-size:10px;letter-spacing:0.08em;padding:4px 9px;border:1px solid var(--accent-line);color:var(--ink-mute);cursor:pointer;transition:all .14s;background:transparent; }
+#dscModal .dm-chip:hover { border-color:var(--accent);color:var(--accent-bright);background:var(--accent-wash); }
+#dscModal .dm-status { font-size:11px;color:var(--ink-mute);letter-spacing:0.1em;min-height:16px;margin-bottom:8px; }
+#dscModal .dm-status.err { color:oklch(0.65 0.18 28); }
+#dscModal .dm-log { display:none;max-height:130px;overflow-y:auto;border:1px solid var(--accent-line);background:oklch(0.10 0.010 22/0.6);padding:8px 10px;margin-bottom:10px; }
+#dscModal .dm-log.on { display:block; }
+#dscModal .dm-log-line { font-size:10.5px;line-height:1.55;color:var(--ink-mute);letter-spacing:0.02em;word-break:break-word; }
+#dscModal .dm-log-line:last-child { color:var(--accent-bright); }
+#dscModal .dm-actions { display:flex;gap:10px;margin-top:8px; }
+#dscModal .dm-btn { display:inline-flex;align-items:center;justify-content:center;flex:1;height:42px;border:1px solid var(--accent);background:linear-gradient(var(--accent-wash),transparent);color:var(--accent-bright);font-family:inherit;font-size:12px;letter-spacing:0.16em;cursor:pointer;transition:all .16s;text-shadow:0 0 8px var(--accent-glow); }
+#dscModal .dm-btn:hover { background:var(--accent);color:var(--bg0);text-shadow:none; }
+#dscModal .dm-btn.ghost { border-color:var(--accent-line);color:var(--ink-dim);background:transparent;text-shadow:none; }
+#dscModal .dm-btn.ghost:hover { border-color:var(--accent);color:var(--accent-bright);background:var(--accent-wash); }
+#dscModal .dm-btn:disabled { opacity:0.4;cursor:not-allowed; }
+
+/* ── DISCOVER RESULTS ── the ranked list. Cards are grouped by how close the
+   candidate is, because that is the only axis the operator can act on: what
+   they do next differs completely between "you already know them" and "no
+   route in". ── */
+.dsc-read { margin-top:22px;border:1px solid var(--accent-line);background:linear-gradient(var(--panel),oklch(0.14 0.014 22/0.5));padding:16px 18px;position:relative; }
+.dsc-read::before { content:"// WHAT WAS SEARCHED";position:absolute;top:-8px;left:16px;background:var(--bg0,oklch(0.13 0.012 22));padding:0 8px;font-size:9px;letter-spacing:0.32em;color:var(--accent-dim); }
+.dsc-read-line { font-size:12px;color:var(--ink-dim);line-height:1.65;letter-spacing:0.03em; }
+.dsc-read-line b { color:var(--accent-bright);font-weight:400; }
+.dsc-read-sig { display:flex;flex-wrap:wrap;gap:6px;margin-top:10px; }
+.dsc-read-sig span { font-size:10px;letter-spacing:0.06em;padding:3px 8px;border:1px solid var(--accent-line2);color:var(--ink-mute); }
+.dsc-group { margin-top:30px; }
+.dsc-group-hd { display:flex;align-items:baseline;gap:10px;padding-bottom:8px;border-bottom:1px solid var(--accent-line2); }
+.dsc-group-hd h3 { font-family:var(--display-hv,"Rajdhani");font-weight:600;font-size:15px;letter-spacing:0.2em;margin:0;color:var(--ink); }
+.dsc-group-hd .n { font-size:11px;color:var(--accent);letter-spacing:0.1em; }
+.dsc-group-hd .why { font-size:10px;color:var(--ink-faint);letter-spacing:0.06em;margin-left:auto; }
+.dsc-grid { margin-top:16px;display:grid;grid-template-columns:repeat(2,1fr);gap:16px; }
+@media(max-width:900px){.dsc-grid{grid-template-columns:1fr;}}
+.dsc-card { position:relative;background:linear-gradient(180deg,var(--panel),oklch(0.15 0.015 22/0.55));border:1px solid var(--accent-line);padding:16px 18px 14px;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease;display:flex;flex-direction:column;gap:10px; }
+.dsc-card:hover { border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-line),0 10px 40px oklch(0 0 0/0.5),inset 0 0 30px var(--accent-wash);transform:translateY(-2px); }
+.dsc-card-hd { display:flex;align-items:flex-start;gap:12px; }
+.dsc-av { width:44px;height:44px;flex:none;border-radius:50%;border:1px solid var(--accent-line);background:var(--accent-wash);display:grid;place-items:center;font-family:var(--display-hv,"Rajdhani");font-size:17px;font-weight:700;color:var(--accent-bright);box-shadow:inset 0 0 16px var(--accent-wash); }
+.dsc-id { flex:1;min-width:0; }
+.dsc-name { font-family:var(--display-hv,"Rajdhani");font-weight:600;font-size:17px;color:var(--ink);letter-spacing:0.04em;line-height:1.15; }
+.dsc-card:hover .dsc-name { color:var(--accent-bright);text-shadow:0 0 14px var(--accent-glow); }
+.dsc-role { font-size:10.5px;color:var(--ink-mute);letter-spacing:0.08em;margin-top:3px;line-height:1.4; }
+.dsc-tier { font-size:9px;letter-spacing:0.18em;padding:3px 7px;border:1px solid var(--accent-line);color:var(--ink-mute);white-space:nowrap;flex:none;align-self:flex-start; }
+.dsc-tier.exceptional { border-color:var(--accent);color:var(--accent-bright);text-shadow:0 0 8px var(--accent-glow); }
+.dsc-why { font-size:12px;color:var(--ink-dim);line-height:1.6;letter-spacing:0.02em; }
+.dsc-reach { border-left:2px solid var(--accent-line);padding:2px 0 2px 10px;font-size:11px;line-height:1.6;color:var(--ink-mute); }
+.dsc-reach.direct { border-left-color:var(--accent); }
+.dsc-reach.bridged { border-left-color:var(--accent-dim); }
+.dsc-reach-hd { font-size:9px;letter-spacing:0.2em;color:var(--accent-dim);margin-bottom:3px; }
+.dsc-reach b { color:var(--ink);font-weight:400; }
+.dsc-src { display:flex;flex-wrap:wrap;gap:6px; }
+.dsc-src a { font-size:9.5px;letter-spacing:0.08em;padding:3px 8px;border:1px solid var(--accent-line2);color:var(--ink-mute);text-decoration:none;transition:all .14s;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.dsc-src a:hover { border-color:var(--accent);color:var(--accent-bright); }
+.dsc-src .nolink { font-size:9.5px;letter-spacing:0.08em;padding:3px 8px;border:1px dashed var(--accent-line2);color:var(--ink-faint); }
+.dsc-acts { display:flex;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid var(--accent-line2); }
+.dsc-act { flex:1;height:32px;border:1px solid var(--accent-line);background:transparent;color:var(--ink-mute);font-family:inherit;font-size:10px;letter-spacing:0.14em;cursor:pointer;transition:all .14s; }
+.dsc-act:hover { border-color:var(--accent);color:var(--accent-bright);background:var(--accent-wash); }
+.dsc-act.primary { border-color:var(--accent);color:var(--accent-bright); }
+.dsc-act.primary:hover { background:var(--accent);color:var(--bg0); }
+.dsc-act:disabled { opacity:0.45;cursor:default; }
+.dsc-notes { margin-top:34px;border-top:1px solid var(--accent-line2);padding-top:14px; }
+.dsc-notes-hd { font-size:9px;letter-spacing:0.3em;color:var(--accent-dim);margin-bottom:8px; }
+.dsc-notes li { font-size:11px;color:var(--ink-faint);line-height:1.7;letter-spacing:0.02em;margin-left:16px; }
 </style>
 </head>
 <body>
@@ -1707,9 +1800,9 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
   </div>
 </div>
 
-<!-- ═══════════════════ DISCOVER RESULTS VIEW (new) — a person's
-     expanded public network, styled like My Connections ═══════════════════ -->
-<div id="discoverResultsView" class="connections-screen">
+<!-- ═══════════════════ DISCOVER RESULTS VIEW — the ranked population,
+     grouped by how close each candidate is ═══════════════════ -->
+<div id="dscResultsView" class="connections-screen">
   <div class="hv-fx" aria-hidden="true">
     <div class="hv-scan"></div><div class="hv-sweep"></div><div class="hv-vignette"></div>
   </div>
@@ -1739,16 +1832,16 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
           </div>
           <div class="hv-word">
             <h1>ARTEMIS</h1>
-            <div class="hv-sub" id="drSub">// DISCOVER</div>
+            <div class="hv-sub" id="dscSub">// DISCOVER</div>
           </div>
         </div>
         <div class="hv-hud-right">
           <div class="hv-opnode fr">
             <span class="br tl"></span><span class="br br2"></span>
-            <div class="av" id="drBadge">??</div>
+            <div class="av" id="dscBadge">??</div>
             <div class="who">
-              <div class="n" id="drUserName">OPERATOR</div>
-              <div class="r">// NETWORK</div>
+              <div class="n" id="dscUserName">OPERATOR</div>
+              <div class="r">// ORIGIN</div>
             </div>
             <button class="hv-btn ghost" onclick="closeDiscoverResultsView()" style="margin-left:10px;font-size:11px;height:30px;padding:0 12px;">← BOARD</button>
           </div>
@@ -1758,24 +1851,107 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
       <!-- TOOLBAR -->
       <div class="hv-toolbar">
         <div class="hv-section-title">
-          <h2 id="drTitle">CONNECTIONS</h2>
-          <span class="hv-cnt" id="drCount">[ 0 ]</span>
+          <h2 id="dscTitle">DISCOVER</h2>
+          <span class="hv-cnt" id="dscCount">[ 0 ]</span>
         </div>
         <div class="hv-tools">
           <div class="hv-search">
             <span class="pre">▸</span>
-            <input id="drSearch" type="text" placeholder="SEARCH CONNECTIONS…" oninput="renderDiscoverResults()">
+            <input id="dscSearch" type="text" placeholder="FILTER RESULTS…" oninput="renderDiscoverResults()">
+          </div>
+          <button class="hv-btn ghost" onclick="dscAddAllToBoard()">＋ ALL TO BOARD</button>
+          <button class="hv-btn" onclick="openDiscoverModal()">◈ NEW SEARCH</button>
+        </div>
+      </div>
+
+      <!-- HOW THE PROMPT WAS READ -->
+      <div class="dsc-read" id="dscRead"></div>
+
+      <!-- GROUPED RESULTS -->
+      <div id="dscGroups"></div>
+
+      <!-- NOTES -->
+      <div class="dsc-notes" id="dscNotes"></div>
+
+      <!-- FOOTER -->
+      <footer class="hv-foot">
+        <span>ARTEMIS v2.6 · DISCOVER <span class="blink">●</span></span>
+        <span id="dscFooterR">0 CANDIDATES</span>
+      </footer>
+
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ EXPAND RESULTS VIEW — a person's
+     expanded public network, styled like My Connections ═══════════════════ -->
+<div id="expandResultsView" class="connections-screen">
+  <div class="hv-fx" aria-hidden="true">
+    <div class="hv-scan"></div><div class="hv-sweep"></div><div class="hv-vignette"></div>
+  </div>
+  <div class="hv-scroll">
+    <div class="hv-wrap">
+
+      <!-- HUD -->
+      <header class="hv-hud">
+        <div class="hv-brand">
+          <div class="hv-mark">
+            <svg viewBox="0 0 100 88" style="width:46px;height:40px;display:block" fill="currentColor" aria-label="Artemis">
+              <polygon points="50,3 93,29 7,29"/>
+              <polygon points="50,12 80,29 20,29" fill="var(--bg0,#0d0808)" opacity="0.55"/>
+              <circle cx="50" cy="24" r="2.4" fill="var(--bg0,#0d0808)" opacity="0.7"/>
+              <rect x="9" y="31" width="82" height="7"/>
+              <rect x="14" y="40" width="7" height="30" rx="0.5"/>
+              <rect x="27" y="40" width="7" height="30" rx="0.5"/>
+              <rect x="40" y="40" width="7" height="30" rx="0.5"/>
+              <rect x="53" y="40" width="7" height="30" rx="0.5"/>
+              <rect x="66" y="40" width="7" height="30" rx="0.5"/>
+              <rect x="79" y="40" width="7" height="30" rx="0.5"/>
+              <rect x="11" y="39" width="78" height="2.5"/>
+              <rect x="11" y="69" width="78" height="2.5"/>
+              <rect x="6" y="72" width="88" height="5"/>
+              <rect x="1" y="78" width="98" height="6"/>
+            </svg>
+          </div>
+          <div class="hv-word">
+            <h1>ARTEMIS</h1>
+            <div class="hv-sub" id="exSub">// EXPAND</div>
+          </div>
+        </div>
+        <div class="hv-hud-right">
+          <div class="hv-opnode fr">
+            <span class="br tl"></span><span class="br br2"></span>
+            <div class="av" id="exBadge">??</div>
+            <div class="who">
+              <div class="n" id="exUserName">OPERATOR</div>
+              <div class="r">// NETWORK</div>
+            </div>
+            <button class="hv-btn ghost" onclick="closeExpandResultsView()" style="margin-left:10px;font-size:11px;height:30px;padding:0 12px;">← BOARD</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- TOOLBAR -->
+      <div class="hv-toolbar">
+        <div class="hv-section-title">
+          <h2 id="exTitle">CONNECTIONS</h2>
+          <span class="hv-cnt" id="exCount">[ 0 ]</span>
+        </div>
+        <div class="hv-tools">
+          <div class="hv-search">
+            <span class="pre">▸</span>
+            <input id="exSearch" type="text" placeholder="SEARCH CONNECTIONS…" oninput="renderExpandResults()">
           </div>
         </div>
       </div>
 
       <!-- GRID -->
-      <div class="hv-grid" id="drGrid"></div>
+      <div class="hv-grid" id="exGrid"></div>
 
       <!-- FOOTER -->
       <footer class="hv-foot">
-        <span>ARTEMIS v2.6 · DISCOVER <span class="blink">●</span></span>
-        <span id="drFooterR">0 CONNECTIONS</span>
+        <span>ARTEMIS v2.6 · EXPAND <span class="blink">●</span></span>
+        <span id="exFooterR">0 CONNECTIONS</span>
       </footer>
 
     </div>
@@ -2210,6 +2386,9 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
     </div>
     <button class="btn" onclick="openImportModal()">⬆ IMPORT</button>
     <div class="tb-sep"></div>
+    <button class="btn" onclick="openDiscoverModal()">◈ DISCOVER</button>
+    <button class="btn" onclick="openExpandModal()">⊕ EXPAND</button>
+    <div class="tb-sep"></div>
     <div class="zoom-group">
       <button class="zoom-btn" onclick="changeZoom(0.8)">−</button>
       <div class="zoom-pct" id="zoomPct">75%</div>
@@ -2351,31 +2530,88 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
 </div>
 </div>
 
-<!-- ═══════════════════ DISCOVER MODAL (new) ═══════════════════ -->
-<div id="discoverScrim" onclick="discoverScrimClick(event)">
-  <div id="discoverModal">
+<!-- ═══════════════════ DISCOVER MODAL ═══════════════════ -->
+<div id="dscScrim" onclick="dscScrimClick(event)">
+  <div id="dscModal">
     <span class="art-br tl"></span><span class="art-br tr"></span>
     <span class="art-br bl"></span><span class="art-br br2"></span>
-    <div class="dvm-lbl">// DISCOVER</div>
-    <h3>EXPAND SOMEONE'S NETWORK</h3>
-    <p class="dvm-sub">Pick a person on this board. Discover reaches out to the live web and lists everyone reachable from them within the chosen number of hops.</p>
-    <div class="dvm-field">
-      <label>WHO TO RUN DISCOVER ON</label>
-      <div class="cp-list" id="dvPersonList" style="max-height:220px;overflow-y:auto"></div>
+    <div class="dm-lbl">// DISCOVER</div>
+    <h3>FIND THE STANDOUTS YOU CAN REACH</h3>
+    <p class="dm-sub">Name a population in your own words. Artemis searches the live web for the
+      people in it who have actually built something, then works out which of them your network
+      touches — and ranks the ones you can reach first.</p>
+
+    <div class="dm-field">
+      <label>WHO ARE YOU LOOKING FOR</label>
+      <textarea id="dscPrompt" placeholder="superintendents&#10;software engineers who work on compilers&#10;family-office CIOs in the Southeast"></textarea>
     </div>
-    <div class="dvm-field">
+    <div class="dm-examples">
+      <button class="dm-chip" onclick="dscUseExample('superintendents')">superintendents</button>
+      <button class="dm-chip" onclick="dscUseExample('software engineers')">software engineers</button>
+      <button class="dm-chip" onclick="dscUseExample('seed-stage investors')">seed-stage investors</button>
+      <button class="dm-chip" onclick="dscUseExample('hospital system CFOs')">hospital system CFOs</button>
+    </div>
+
+    <div class="dm-row">
+      <div class="dm-field">
+        <label>SEARCHING FROM</label>
+        <input id="dscOrigin" type="text" placeholder="your name">
+      </div>
+      <div class="dm-field">
+        <label>HOW MANY</label>
+        <select id="dscLimit">
+          <option value="5">5 — fast</option>
+          <option value="10" selected>10</option>
+          <option value="15">15 — slower</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="dm-field">
+      <label>YOUR ROLE &amp; ORG <span class="hint">— what bounds the search when you name no scope</span></label>
+      <input id="dscOriginContext" type="text" placeholder="e.g. Superintendent of Cabell County Schools, WV">
+    </div>
+
+    <div class="dm-field">
+      <label>WHAT YOU WANT FROM THEM <span class="hint">— optional</span></label>
+      <input id="dscAsk" type="text" placeholder="e.g. advice on a district-wide literacy rollout">
+    </div>
+
+    <div class="hv-loadbar" id="dscProgress"><div class="hv-loadbar-fill" id="dscProgressFill"></div></div>
+    <div class="dm-log" id="dscLog"></div>
+    <div class="dm-status" id="dscStatus"></div>
+    <div class="dm-actions">
+      <button class="dm-btn" id="dscSubmitBtn" onclick="submitDiscover()">RUN DISCOVER ▸</button>
+      <button class="dm-btn ghost" onclick="closeDiscoverModal()">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ EXPAND MODAL ═══════════════════ -->
+<div id="expandScrim" onclick="expandScrimClick(event)">
+  <div id="expandModal">
+    <span class="art-br tl"></span><span class="art-br tr"></span>
+    <span class="art-br bl"></span><span class="art-br br2"></span>
+    <div class="exm-lbl">// EXPAND</div>
+    <h3>EXPAND SOMEONE'S NETWORK</h3>
+    <p class="exm-sub">Pick a person already on this board. Expand reaches out to the live web and lists their documented professional connections. To find people you cannot yet name, use DISCOVER.</p>
+    <div class="exm-field">
+      <label>WHO TO EXPAND</label>
+      <div class="cp-list" id="exPersonList" style="max-height:220px;overflow-y:auto"></div>
+    </div>
+    <div class="exm-field">
       <label>HOPS OUT</label>
-      <select id="dvDepth">
+      <select id="exDepth">
         <option value="1">1 — direct connections only</option>
         <option value="2" selected>2 — connections of connections</option>
         <option value="3">3 — deep (slow)</option>
       </select>
     </div>
-    <div class="hv-loadbar" id="dvProgress"><div class="hv-loadbar-fill" id="dvProgressFill"></div></div>
-    <div class="dvm-status" id="dvStatus"></div>
-    <div class="dvm-actions">
-      <button class="dvm-btn" id="dvSubmitBtn" onclick="submitDiscover()">RUN DISCOVER ▸</button>
-      <button class="dvm-btn ghost" onclick="closeDiscoverModal()">CANCEL</button>
+    <div class="hv-loadbar" id="exProgress"><div class="hv-loadbar-fill" id="exProgressFill"></div></div>
+    <div class="exm-status" id="exStatus"></div>
+    <div class="exm-actions">
+      <button class="exm-btn" id="exSubmitBtn" onclick="submitExpand()">RUN EXPAND ▸</button>
+      <button class="exm-btn ghost" onclick="closeExpandModal()">CANCEL</button>
     </div>
   </div>
 </div>
@@ -2394,6 +2630,6 @@ input[type="file"] { color: #cc8888; font-size: 0.78rem; cursor: pointer; width:
   </div>
 </div>
 
-<script src="app.js?v=20260803e"></script>
+<script src="app.js?v=20260812a"></script>
 </body>
 </html>
